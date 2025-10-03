@@ -2,7 +2,7 @@ import os
 from flask import Flask, render_template, jsonify
 import googleapiclient.discovery
 
-# --- Flaskアプリケーションのセットアップ  ---
+# --- Flaskアプリケーションのセットアップ ---
 app = Flask(__name__, template_folder='templates')
 
 # --- APIと設定 ---
@@ -27,10 +27,12 @@ def get_videos():
         youtube = googleapiclient.discovery.build("youtube", "v3", developerKey=API_KEY)
 
         request = youtube.videos().list(
-            part="id", # IDだけ取得すれば良い
+            part="id",
             chart="mostPopular",
             regionCode=REGION_CODE,
-            maxResults=MAX_RESULTS
+            maxResults=MAX_RESULTS,
+            # ★変更点: 埋め込みが許可されている動画のみをリクエストする
+            videoEmbeddable='true'
         )
         response = request.execute()
         
