@@ -54,8 +54,6 @@
     <canvas id="canvas" style="display:none;"></canvas>
 
     <script>
-        // ★変更点：JavaScriptの実行タイミング問題を修正
-
         const startButton = document.getElementById('startButton');
         const stopButton = document.getElementById('stopButton');
         const statusDiv = document.getElementById('status');
@@ -64,34 +62,37 @@
         const canvasElement = document.getElementById('canvas');
 
         let popupWin, player, captureInterval, mediaStream, videoIds = [], currentVideoIndex = 0;
-        let isApiReady = false; // APIが準備完了したかのフラグ
-
-        // IFrame Player APIのスクリプトを非同期でロード
-        const tag = document.createElement('script');
-        tag.src = "https://www.youtube.com/iframe_api";
-        const firstScriptTag = document.getElementsByTagName('script')[0];
-        firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
         
-        // この関数はAPIの準備が完了すると自動で呼ばれる
-        // ここではフラグを立てるだけにして、プレーヤーの作成は行わない
-        window.onYouTubeIframeAPIReady = function() {
-            isApiReady = true;
-        }
-        
-        // --- イベントリスナー ---
         startButton.addEventListener('click', main);
         stopButton.addEventListener('click', stopCapture);
+
+        function loadYouTubeApi() {
+            return new Promise((resolve) => {
+                if (window.YT && window.YT.Player) {
+                    return resolve();
+                }
+                window.onYouTubeIframeAPIReady = () => resolve();
+                const tag = document.createElement('script');
+                tag.src = "https://www.youtube.com/iframe_api";
+                const firstScriptTag = document.getElementsByTagName('script')[0];
+                firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+            });
+        }
 
         async function main() {
             setControls(true, '動画リストを取得中...');
             
             try {
                 const response = await fetch('/get-videos');
-                if (!response.ok) throw new Error('動画リストの取得に失敗しました。');
-                videoIds = await response.json();
+                const data = await response.json();
+                if (!response.ok) {
+                    // ★変更点：サーバーからの詳細なエラーメッセージがあればそれを表示
+                    throw new Error(data.error || '動画リストの取得に失敗しました。');
+                }
+                videoIds = data;
                 if (videoIds.length === 0) throw new Error('埋め込み可能な動画が見つかりませんでした。');
-                currentVideoIndex = 0;
                 
+                currentVideoIndex = 0;
                 popupWin = window.open('', 'youtubePlayer', 'width=480,height=320,resizable=yes');
                 if (!popupWin) throw new Error('ポップアップがブロックされました。');
                 popupWin.document.body.innerHTML = '<div id="player-container" style="width:100%; height:100%;"></div>';
@@ -99,27 +100,23 @@
                 mediaStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
                 videoElement.srcObject = mediaStream;
                 mediaStream.getVideoTracks()[0].onended = stopCapture;
-
-                // APIの準備ができるまで少し待つ
-                if (!isApiReady) {
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                }
-                if (!isApiReady) throw new Error('YouTube Player APIの読み込みに失敗しました。');
+                
+                statusDiv.textContent = 'YouTubeプレーヤーAPIを読み込み中...';
+                await loadYouTubeApi();
                 
                 statusDiv.textContent = 'プレーヤーを準備中...';
-                createPlayer(); // ポップアップを開いた後にプレーヤーを作成
+                createPlayer();
 
             } catch (err) {
                 console.error("エラー:", err);
+                // ★変更点：エラーメッセージをそのまま画面に表示
                 setControls(false, `エラー: ${err.message}`);
                 if (popupWin) popupWin.close();
             }
         }
 
         function createPlayer() {
-            if (player) {
-                player.destroy();
-            }
+            if (player) { player.destroy(); }
             player = new YT.Player(popupWin.document.getElementById('player-container'), {
                 height: '100%',
                 width: '100%',
