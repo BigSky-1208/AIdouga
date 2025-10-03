@@ -2,7 +2,7 @@ import os
 from flask import Flask, render_template, jsonify
 import googleapiclient.discovery
 
-# --- Flaskアプリケーションのセットアップ ---
+# --- Flaskアプリケーションのセットアップ  ---
 app = Flask(__name__, template_folder='templates')
 
 # --- APIと設定 ---
