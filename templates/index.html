@@ -3,134 +3,143 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YouTube Scraper</title>
+    <title>YouTube Tab Screen Capture</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { font-family: 'Inter', sans-serif; }
         .btn-disabled { cursor: not-allowed; opacity: 0.5; }
+        .screenshot-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            gap: 1rem;
+        }
     </style>
 </head>
-<body class="bg-gray-100 text-gray-800 flex items-center justify-center min-h-screen">
+<body class="bg-gray-100 text-gray-800">
+    <div class="container mx-auto p-8">
+        <div class="w-full max-w-4xl mx-auto bg-white rounded-xl shadow-lg p-8">
+            <h1 class="text-3xl font-bold text-center text-gray-900 mb-2">タブ画面キャプチャーツール</h1>
+            <p class="text-center text-gray-500 mb-6">ユーザーが指定したブラウザのタブを5秒ごとに自動でスクリーンショットします。</p>
 
-    <div class="w-full max-w-2xl bg-white rounded-xl shadow-lg p-8">
-        <h1 class="text-3xl font-bold text-center text-gray-900 mb-2">動画シーン収集ツール</h1>
-        <p class="text-center text-gray-500 mb-6">人気の動画から指定した条件のシーンを収集します。</p>
-
-        <!-- 操作ボタン -->
-        <div class="flex justify-center space-x-4 mb-6">
-            <button id="startButton" class="px-8 py-3 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-opacity-75 transition-transform transform hover:scale-105">
-                収集を開始
-            </button>
-            <button id="stopButton" class="px-8 py-3 bg-red-600 text-white font-semibold rounded-lg shadow-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-75 transition-transform transform hover:scale-105 btn-disabled" disabled>
-                収集を停止
-            </button>
-        </div>
-
-        <!-- ステータス表示 -->
-        <div class="bg-gray-50 p-4 rounded-lg mb-6">
-            <h2 class="font-semibold text-gray-700 mb-2">現在のステータス:</h2>
-            <div id="status" class="text-gray-600 bg-white p-3 rounded-md min-h-[40px] flex items-center">
-                待機中 (Idle)
+            <!-- 操作ガイド -->
+            <div class="bg-blue-50 border-l-4 border-blue-500 text-blue-700 p-4 mb-6 rounded-md">
+                <h3 class="font-bold">使い方:</h3>
+                <ol class="list-decimal list-inside mt-2 text-sm">
+                    <li>キャプチャーしたいYouTube動画を別のタブで開いて再生してください。</li>
+                    <li>下の「共有を開始」ボタンを押し、ブラウザの指示に従ってそのYouTubeタブを選択します。</li>
+                    <li>キャプチャーが自動で開始されます。</li>
+                </ol>
             </div>
-        </div>
 
-        <!-- 結果表示 -->
-        <div class="bg-gray-50 p-4 rounded-lg">
-            <h2 class="font-semibold text-gray-700 mb-2">収集結果:</h2>
-            <div id="results" class="bg-white p-3 rounded-md min-h-[150px] max-h-[300px] overflow-y-auto space-y-2 text-sm">
-                <!-- ここに結果が動的に追加されます -->
+            <!-- 操作ボタン -->
+            <div class="flex justify-center space-x-4 mb-6">
+                <button id="startButton" class="px-8 py-3 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-opacity-75 transition-transform transform hover:scale-105">
+                    共有を開始
+                </button>
+                <button id="stopButton" class="px-8 py-3 bg-red-600 text-white font-semibold rounded-lg shadow-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-75 transition-transform transform hover:scale-105 btn-disabled" disabled>
+                    共有を停止
+                </button>
+            </div>
+
+            <!-- ステータス表示 -->
+            <div class="bg-gray-50 p-4 rounded-lg mb-6">
+                <h2 class="font-semibold text-gray-700 mb-2">現在のステータス:</h2>
+                <div id="status" class="text-gray-600 bg-white p-3 rounded-md min-h-[40px] flex items-center">
+                    待機中
+                </div>
+            </div>
+
+            <!-- 結果表示 -->
+            <div class="bg-gray-50 p-4 rounded-lg">
+                <h2 class="font-semibold text-gray-700 mb-2">スクリーンショット一覧:</h2>
+                <div id="results" class="bg-white p-4 rounded-md min-h-[200px] max-h-[400px] overflow-y-auto screenshot-grid">
+                    <!-- ここにスクリーンショット画像が追加されます -->
+                </div>
             </div>
         </div>
     </div>
+
+    <!-- 内部処理用の非表示ビデオ要素 -->
+    <video id="video" playsinline autoplay muted style="display:none;"></video>
+    <canvas id="canvas" style="display:none;"></canvas>
 
     <script>
         const startButton = document.getElementById('startButton');
         const stopButton = document.getElementById('stopButton');
         const statusDiv = document.getElementById('status');
         const resultsDiv = document.getElementById('results');
+        const videoElement = document.getElementById('video');
+        const canvasElement = document.getElementById('canvas');
 
-        let statusInterval;
+        let captureInterval;
+        let mediaStream;
 
-        // --- イベントリスナー ---
-        startButton.addEventListener('click', startProcess);
-        stopButton.addEventListener('click', stopProcess);
+        startButton.addEventListener('click', startCapture);
+        stopButton.addEventListener('click', stopCapture);
 
-        // --- 関数定義 ---
-        
-        // 処理を開始する
-        async function startProcess() {
-            setControls(true); // ボタンの状態を更新
-            resultsDiv.innerHTML = ''; // 前回の結果をクリア
-            statusDiv.textContent = '処理を開始しています...';
-            
+        async function startCapture() {
             try {
-                const response = await fetch('/start', { method: 'POST' });
-                const data = await response.json();
-                statusDiv.textContent = data.status;
-
-                // 2秒ごとにステータスをポーリング（問い合わせ）開始
-                if (response.ok) {
-                    statusInterval = setInterval(getStatus, 2000);
-                } else {
-                    setControls(false); // エラーならコントロールを元に戻す
-                }
-            } catch (error) {
-                statusDiv.textContent = 'エラー: サーバーに接続できませんでした。';
-                setControls(false);
-            }
-        }
-
-        // 処理を停止する
-        async function stopProcess() {
-            stopButton.classList.add('btn-disabled');
-            stopButton.disabled = true;
-            statusDiv.textContent = '停止をリクエスト中...';
-            
-            try {
-                await fetch('/stop', { method: 'POST' });
-            } catch (error) {
-                statusDiv.textContent = 'エラー: 停止リクエストを送信できませんでした。';
-            }
-        }
-
-        // 現在のステータスを取得して画面を更新する
-        async function getStatus() {
-            try {
-                const response = await fetch('/status');
-                const data = await response.json();
-
-                statusDiv.textContent = data.status;
-                
-                // 結果リストを更新
-                resultsDiv.innerHTML = ''; // 一旦クリア
-                data.results.forEach(resultText => {
-                    const p = document.createElement('p');
-                    p.textContent = `✅ ${resultText}`;
-                    p.className = 'p-2 bg-green-50 rounded-md';
-                    resultsDiv.appendChild(p);
+                // 画面共有をリクエスト (タブ共有を推奨)
+                mediaStream = await navigator.mediaDevices.getDisplayMedia({
+                    video: { mediaSource: "tab" }, // Chrome 107+
+                    audio: false
                 });
-                resultsDiv.scrollTop = resultsDiv.scrollHeight; // 自動で一番下までスクロール
 
-                // もし処理が終了していたら、ポーリングを停止
-                if (!data.is_running) {
-                    clearInterval(statusInterval);
-                    setControls(false);
-                }
-            } catch (error) {
-                statusDiv.textContent = 'エラー: ステータスを取得できませんでした。';
-                clearInterval(statusInterval);
-                setControls(false);
+                videoElement.srcObject = mediaStream;
+                setControls(true);
+                statusDiv.textContent = 'キャプチャー中です...';
+                
+                // ストリームが終了した（ユーザーが共有を停止した）場合の処理
+                mediaStream.getVideoTracks()[0].onended = () => stopCapture();
+
+                // 5秒ごとにスクリーンショットを撮る
+                captureInterval = setInterval(() => {
+                    takeScreenshot();
+                }, 5000);
+
+            } catch (err) {
+                console.error("画面共有エラー:", err);
+                statusDiv.textContent = 'エラー: 画面共有を開始できませんでした。';
             }
         }
-        
-        // ボタンの有効/無効を切り替える
-        function setControls(isProcessing) {
-            startButton.disabled = isProcessing;
-            stopButton.disabled = !isProcessing;
+
+        function stopCapture() {
+            if (captureInterval) clearInterval(captureInterval);
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+            }
+            setControls(false);
+            statusDiv.textContent = '停止しました。';
+        }
+
+        function takeScreenshot() {
+            const context = canvasElement.getContext('2d');
+            const videoTrack = mediaStream.getVideoTracks()[0];
+            const { width, height } = videoTrack.getSettings();
+
+            if (!width || !height) return;
+
+            canvasElement.width = width;
+            canvasElement.height = height;
+
+            context.drawImage(videoElement, 0, 0, width, height);
             
-            if(isProcessing) {
+            // 画像を作成して表示
+            const img = document.createElement('img');
+            img.src = canvasElement.toDataURL('image/jpeg');
+            img.className = 'rounded-md shadow-md';
+            resultsDiv.appendChild(img);
+            resultsDiv.scrollTop = resultsDiv.scrollHeight; // 自動スクロール
+        }
+
+        function setControls(isCapturing) {
+            startButton.disabled = isCapturing;
+            stopButton.disabled = !isCapturing;
+            
+            if(isCapturing) {
                 startButton.classList.add('btn-disabled');
                 stopButton.classList.remove('btn-disabled');
+                resultsDiv.innerHTML = ''; // 開始時に結果をクリア
             } else {
                 startButton.classList.remove('btn-disabled');
                 stopButton.classList.add('btn-disabled');
