@@ -1,4 +1,5 @@
 import os
+import random
 from flask import Flask, render_template, jsonify
 import googleapiclient.discovery
 import logging
@@ -24,22 +25,22 @@ def get_videos():
     try:
         youtube = googleapiclient.discovery.build("youtube", "v3", developerKey=API_KEY)
 
-        # ★変更点1: partに'status'を追加して、動画の状態(埋め込み可否など)も取得する
         request = youtube.videos().list(
             part="id,status",
             chart="mostPopular",
             regionCode=REGION_CODE,
             maxResults=MAX_RESULTS
-            # ★変更点2: エラーの原因となっていた video_embeddable パラメータを削除
         )
         response = request.execute()
         
-        # ★変更点3: 取得した動画の中から、埋め込みが許可されている(embeddable: True)ものだけを抽出する
         video_ids = [
             item['id']
             for item in response.get("items", [])
             if item.get('status', {}).get('embeddable')
         ]
+        
+        # ★変更点: 取得した動画IDのリストをランダムにシャッフルする
+        random.shuffle(video_ids)
         
         return jsonify(video_ids)
 
@@ -50,4 +51,5 @@ def get_videos():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080)
+
 
