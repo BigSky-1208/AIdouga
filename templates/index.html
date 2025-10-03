@@ -26,17 +26,20 @@
                 <ol class="list-decimal list-inside mt-2 text-sm">
                     <li>下の「プレーヤーを開いてキャプチャ開始」ボタンを押します。</li>
                     <li>小さなポップアップウィンドウが開きます。</li>
-                    <li>次に表示されるブラウザの指示に従って、**開いたポップアップウィンドウを選択して共有**してください。</li>
+                    <li>ブラウザの指示に従って、**開いたポップアップウィンドウを選択して共有**してください。</li>
                     <li>ポップアップ内の動画を再生すると、5秒ごとにキャプチャーが始まります。</li>
-                    <li>動画が終了すると、自動で次の動画が読み込まれます。</li>
                 </ol>
             </div>
 
             <div class="flex justify-center space-x-4 mb-6">
-                <button id="startButton" class="px-8 py-3 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700">
+                <button id="startButton" class="px-6 py-3 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700">
                     プレーヤーを開いてキャプチャ開始
                 </button>
-                <button id="stopButton" class="px-8 py-3 bg-red-600 text-white font-semibold rounded-lg shadow-md hover:bg-red-700 btn-disabled" disabled>
+                <!-- ★変更点: 「次の動画」ボタンを追加 -->
+                <button id="nextButton" class="px-6 py-3 bg-green-600 text-white font-semibold rounded-lg shadow-md hover:bg-green-700 btn-disabled" disabled>
+                    次の動画
+                </button>
+                <button id="stopButton" class="px-6 py-3 bg-red-600 text-white font-semibold rounded-lg shadow-md hover:bg-red-700 btn-disabled" disabled>
                     停止
                 </button>
             </div>
@@ -54,23 +57,27 @@
     <canvas id="canvas" style="display:none;"></canvas>
 
     <script>
+        // DOM要素の取得
         const startButton = document.getElementById('startButton');
+        const nextButton = document.getElementById('nextButton');
         const stopButton = document.getElementById('stopButton');
         const statusDiv = document.getElementById('status');
         const resultsDiv = document.getElementById('results');
         const videoElement = document.getElementById('video');
         const canvasElement = document.getElementById('canvas');
 
+        // 状態管理用の変数
         let popupWin, player, captureInterval, mediaStream, videoIds = [], currentVideoIndex = 0;
         
+        // イベントリスナーの設定
         startButton.addEventListener('click', main);
+        nextButton.addEventListener('click', loadNextVideo);
         stopButton.addEventListener('click', stopCapture);
 
+        // YouTube APIの非同期読み込み
         function loadYouTubeApi() {
             return new Promise((resolve) => {
-                if (window.YT && window.YT.Player) {
-                    return resolve();
-                }
+                if (window.YT && window.YT.Player) return resolve();
                 window.onYouTubeIframeAPIReady = () => resolve();
                 const tag = document.createElement('script');
                 tag.src = "https://www.youtube.com/iframe_api";
@@ -79,23 +86,22 @@
             });
         }
 
+        // メイン処理
         async function main() {
             setControls(true, '動画リストを取得中...');
             
             try {
                 const response = await fetch('/get-videos');
                 const data = await response.json();
-                if (!response.ok) {
-                    // ★変更点：サーバーからの詳細なエラーメッセージがあればそれを表示
-                    throw new Error(data.error || '動画リストの取得に失敗しました。');
-                }
+                if (!response.ok) throw new Error(data.error || '動画リストの取得に失敗しました。');
+                
                 videoIds = data;
                 if (videoIds.length === 0) throw new Error('埋め込み可能な動画が見つかりませんでした。');
                 
                 currentVideoIndex = 0;
                 popupWin = window.open('', 'youtubePlayer', 'width=480,height=320,resizable=yes');
                 if (!popupWin) throw new Error('ポップアップがブロックされました。');
-                popupWin.document.body.innerHTML = '<div id="player-container" style="width:100%; height:100%;"></div>';
+                popupWin.document.body.innerHTML = '<div id="player-container" style="position:absolute; top:0; left:0; width:100%; height:100%;"></div>';
                 
                 mediaStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
                 videoElement.srcObject = mediaStream;
@@ -109,12 +115,12 @@
 
             } catch (err) {
                 console.error("エラー:", err);
-                // ★変更点：エラーメッセージをそのまま画面に表示
                 setControls(false, `エラー: ${err.message}`);
                 if (popupWin) popupWin.close();
             }
         }
 
+        // YouTubeプレーヤーを作成
         function createPlayer() {
             if (player) { player.destroy(); }
             player = new YT.Player(popupWin.document.getElementById('player-container'), {
@@ -123,25 +129,34 @@
                 videoId: videoIds[currentVideoIndex],
                 playerVars: { 'autoplay': 1, 'controls': 1 },
                 events: {
-                    'onReady': () => statusDiv.textContent = 'プレーヤーの準備完了。動画を再生するとキャプチャーが始まります。',
-                    'onStateChange': onPlayerStateChange
+                    'onReady': () => statusDiv.textContent = `プレーヤー準備完了。動画(${currentVideoIndex + 1}/${videoIds.length})を再生してください。`,
+                    'onStateChange': onPlayerStateChange,
+                    'onError': onPlayerError // ★変更点: エラーハンドラを追加
                 }
             });
         }
 
+        // プレーヤーの状態が変化したときの処理
         function onPlayerStateChange(event) {
-            if (event.data == YT.PlayerState.PLAYING) {
-                statusDiv.textContent = 'キャプチャー中...';
-                captureInterval = setInterval(takeScreenshot, 5000);
+            // ★変更点: 再生が開始されたらキャプチャーを開始し、それ以外（一時停止、終了など）で停止するロジックを改善
+            if (event.data === YT.PlayerState.PLAYING) {
+                startScreenshotInterval();
             } else {
-                clearInterval(captureInterval);
-                if (event.data == YT.PlayerState.ENDED) {
-                    statusDiv.textContent = '次の動画を読み込み中...';
+                stopScreenshotInterval();
+                if (event.data === YT.PlayerState.ENDED) {
+                    statusDiv.textContent = '再生終了。次の動画を読み込みます...';
                     loadNextVideo();
                 }
             }
         }
+        
+        // ★追加: プレーヤーでエラーが起きたときの処理
+        function onPlayerError(event) {
+            statusDiv.textContent = `動画エラー(${event.data})。次の動画を試します。`;
+            loadNextVideo();
+        }
 
+        // 次の動画を読み込む
         function loadNextVideo() {
             currentVideoIndex++;
             if (currentVideoIndex >= videoIds.length) {
@@ -149,10 +164,25 @@
                 stopCapture();
                 return;
             }
+            statusDiv.textContent = `動画(${currentVideoIndex + 1}/${videoIds.length})を読み込み中...`;
             player.loadVideoById(videoIds[currentVideoIndex]);
         }
         
+        // スクリーンショット撮影のインターバルを開始
+        function startScreenshotInterval() {
+            stopScreenshotInterval(); // 念のため既存のインターバルはクリア
+            statusDiv.textContent = 'キャプチャー中...';
+            captureInterval = setInterval(takeScreenshot, 5000);
+        }
+
+        // スクリーンショット撮影のインターバルを停止
+        function stopScreenshotInterval() {
+            clearInterval(captureInterval);
+        }
+
+        // スクリーンショットを撮影して表示
         function takeScreenshot() {
+            if (!videoElement.srcObject) return;
             const context = canvasElement.getContext('2d');
             canvasElement.width = videoElement.videoWidth;
             canvasElement.height = videoElement.videoHeight;
@@ -165,24 +195,30 @@
             resultsDiv.scrollTop = resultsDiv.scrollHeight;
         }
 
+        // 全てのキャプチャー処理を停止
         function stopCapture() {
-            clearInterval(captureInterval);
+            stopScreenshotInterval();
             if (mediaStream) mediaStream.getTracks().forEach(track => track.stop());
-            if (popupWin) popupWin.close();
+            if (popupWin) {
+                popupWin.close();
+                popupWin = null;
+            }
             setControls(false, '停止しました。');
         }
 
+        // 操作ボタンの有効/無効を切り替える
         function setControls(isCapturing, statusText) {
             startButton.disabled = isCapturing;
+            nextButton.disabled = !isCapturing; // ★変更点: nextButtonの制御を追加
             stopButton.disabled = !isCapturing;
             statusDiv.textContent = statusText;
+            
+            startButton.classList.toggle('btn-disabled', isCapturing);
+            nextButton.classList.toggle('btn-disabled', !isCapturing); // ★変更点
+            stopButton.classList.toggle('btn-disabled', !isCapturing); // ★変更点
+            
             if (isCapturing) {
-                startButton.classList.add('btn-disabled');
-                stopButton.classList.remove('btn-disabled');
                 resultsDiv.innerHTML = '';
-            } else {
-                startButton.classList.remove('btn-disabled');
-                stopButton.classList.add('btn-disabled');
             }
         }
     </script>
