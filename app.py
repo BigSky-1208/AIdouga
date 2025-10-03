@@ -1,29 +1,27 @@
 import os
 from flask import Flask, render_template, jsonify
 import googleapiclient.discovery
+import logging
 
-# --- Flaskアプリケーションのセットアップ ---
+logging.basicConfig(level=logging.INFO)
+
 app = Flask(__name__, template_folder='templates')
 
-# --- APIと設定 ---
-# APIキーはRenderの環境変数から読み込む
 API_KEY = os.getenv("YOUTUBE_API_KEY")
 REGION_CODE = "JP"
-MAX_RESULTS = 20 # 取得するランダム動画の候補数
+MAX_RESULTS = 20
 
 @app.route('/')
 def index():
-    """ユーザーインターフェースとなるHTMLページを表示する。"""
     return render_template('index.html')
 
 @app.route('/get-videos')
 def get_videos():
-    """YouTube Data APIを使って人気の動画IDリストを取得するAPIエンドポイント"""
     if not API_KEY:
-        return jsonify({"error": "YOUTUBE_API_KEYが設定されていません。"}), 500
+        app.logger.error("YOUTUBE_API_KEY is not set.")
+        return jsonify({"error": "サーバー側でAPIキーが設定されていません。"}), 500
     
     try:
-        # YouTube Data APIのクライアントをセットアップ
         youtube = googleapiclient.discovery.build("youtube", "v3", developerKey=API_KEY)
 
         request = youtube.videos().list(
@@ -31,7 +29,6 @@ def get_videos():
             chart="mostPopular",
             regionCode=REGION_CODE,
             maxResults=MAX_RESULTS,
-            # ★変更点: 埋め込みが許可されている動画のみをリクエストする
             videoEmbeddable='true'
         )
         response = request.execute()
@@ -40,10 +37,11 @@ def get_videos():
         return jsonify(video_ids)
 
     except Exception as e:
-        return jsonify({"error": f"APIエラー: {str(e)}"}), 500
+        app.logger.error(f"YouTube APIへのアクセス中にエラーが発生しました: {e}")
+        # ★変更点：デバッグのため、詳細なエラーメッセージをフロントエンドに返す
+        return jsonify({"error": f"サーバーエラー: {str(e)}"}), 500
 
 
 if __name__ == '__main__':
-    # Render.comではGunicornが使われるため、この部分はローカルテスト用
     app.run(host='0.0.0.0', port=8080)
 
