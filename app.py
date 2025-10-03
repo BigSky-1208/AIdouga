@@ -9,7 +9,7 @@ app = Flask(__name__, template_folder='templates')
 
 API_KEY = os.getenv("YOUTUBE_API_KEY")
 REGION_CODE = "JP"
-MAX_RESULTS = 20
+MAX_RESULTS = 50 # 少し多めに取得してフィルタリングする
 
 @app.route('/')
 def index():
@@ -24,18 +24,23 @@ def get_videos():
     try:
         youtube = googleapiclient.discovery.build("youtube", "v3", developerKey=API_KEY)
 
+        # ★変更点1: partに'status'を追加して、動画の状態(埋め込み可否など)も取得する
         request = youtube.videos().list(
-            part="id",
+            part="id,status",
             chart="mostPopular",
             regionCode=REGION_CODE,
-            maxResults=MAX_RESULTS,
-            # ★変更点: パラメータ名を 'videoEmbeddable' から 'video_embeddable' に修正
-            # また、値を文字列の 'true' からPythonの真偽値 True に変更
-            video_embeddable=True
+            maxResults=MAX_RESULTS
+            # ★変更点2: エラーの原因となっていた video_embeddable パラメータを削除
         )
         response = request.execute()
         
-        video_ids = [item['id'] for item in response.get("items", [])]
+        # ★変更点3: 取得した動画の中から、埋め込みが許可されている(embeddable: True)ものだけを抽出する
+        video_ids = [
+            item['id']
+            for item in response.get("items", [])
+            if item.get('status', {}).get('embeddable')
+        ]
+        
         return jsonify(video_ids)
 
     except Exception as e:
