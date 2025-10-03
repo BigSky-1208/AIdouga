@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YouTube Tab Screen Capture</title>
+    <title>YouTube Popup Capture</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { font-family: 'Inter', sans-serif; }
@@ -18,48 +18,38 @@
 <body class="bg-gray-100 text-gray-800">
     <div class="container mx-auto p-8">
         <div class="w-full max-w-4xl mx-auto bg-white rounded-xl shadow-lg p-8">
-            <h1 class="text-3xl font-bold text-center text-gray-900 mb-2">タブ画面キャプチャーツール</h1>
-            <p class="text-center text-gray-500 mb-6">ユーザーが指定したブラウザのタブを5秒ごとに自動でスクリーンショットします。</p>
+            <h1 class="text-3xl font-bold text-center text-gray-900 mb-2">ポップアップ動画キャプチャーツール</h1>
+            <p class="text-center text-gray-500 mb-6">ポップアップで表示される動画を再生すると、自動でキャプチャーを開始します。</p>
 
-            <!-- 操作ガイド -->
             <div class="bg-blue-50 border-l-4 border-blue-500 text-blue-700 p-4 mb-6 rounded-md">
                 <h3 class="font-bold">使い方:</h3>
                 <ol class="list-decimal list-inside mt-2 text-sm">
-                    <li>キャプチャーしたいYouTube動画を別のタブで開いて再生してください。</li>
-                    <li>下の「共有を開始」ボタンを押し、ブラウザの指示に従ってそのYouTubeタブを選択します。</li>
-                    <li>キャプチャーが自動で開始されます。</li>
+                    <li>下の「プレーヤーを開いてキャプチャ開始」ボタンを押します。</li>
+                    <li>小さなポップアップウィンドウが開きます。</li>
+                    <li>次に表示されるブラウザの指示に従って、**開いたポップアップウィンドウを選択して共有**してください。</li>
+                    <li>ポップアップ内の動画を再生すると、5秒ごとにキャプチャーが始まります。</li>
+                    <li>動画が終了すると、自動で次の動画が読み込まれます。</li>
                 </ol>
             </div>
 
-            <!-- 操作ボタン -->
             <div class="flex justify-center space-x-4 mb-6">
-                <button id="startButton" class="px-8 py-3 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-opacity-75 transition-transform transform hover:scale-105">
-                    共有を開始
+                <button id="startButton" class="px-8 py-3 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700">
+                    プレーヤーを開いてキャプチャ開始
                 </button>
-                <button id="stopButton" class="px-8 py-3 bg-red-600 text-white font-semibold rounded-lg shadow-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-75 transition-transform transform hover:scale-105 btn-disabled" disabled>
-                    共有を停止
+                <button id="stopButton" class="px-8 py-3 bg-red-600 text-white font-semibold rounded-lg shadow-md hover:bg-red-700 btn-disabled" disabled>
+                    停止
                 </button>
             </div>
 
-            <!-- ステータス表示 -->
-            <div class="bg-gray-50 p-4 rounded-lg mb-6">
-                <h2 class="font-semibold text-gray-700 mb-2">現在のステータス:</h2>
-                <div id="status" class="text-gray-600 bg-white p-3 rounded-md min-h-[40px] flex items-center">
-                    待機中
-                </div>
-            </div>
+            <div id="status" class="text-center text-gray-600 mb-6 min-h-[24px]">待機中</div>
 
-            <!-- 結果表示 -->
             <div class="bg-gray-50 p-4 rounded-lg">
                 <h2 class="font-semibold text-gray-700 mb-2">スクリーンショット一覧:</h2>
-                <div id="results" class="bg-white p-4 rounded-md min-h-[200px] max-h-[400px] overflow-y-auto screenshot-grid">
-                    <!-- ここにスクリーンショット画像が追加されます -->
-                </div>
+                <div id="results" class="bg-white p-4 rounded-md min-h-[200px] max-h-[400px] overflow-y-auto screenshot-grid"></div>
             </div>
         </div>
     </div>
 
-    <!-- 内部処理用の非表示ビデオ要素 -->
     <video id="video" playsinline autoplay muted style="display:none;"></video>
     <canvas id="canvas" style="display:none;"></canvas>
 
@@ -71,75 +61,120 @@
         const videoElement = document.getElementById('video');
         const canvasElement = document.getElementById('canvas');
 
-        let captureInterval;
-        let mediaStream;
+        let popupWin, player, captureInterval, mediaStream, videoIds = [], currentVideoIndex = 0;
 
-        startButton.addEventListener('click', startCapture);
+        // IFrame Player APIのスクリプトを非同期でロード
+        const tag = document.createElement('script');
+        tag.src = "https://www.youtube.com/iframe_api";
+        const firstScriptTag = document.getElementsByTagName('script')[0];
+        firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+        
+        // --- イベントリスナー ---
+        startButton.addEventListener('click', main);
         stopButton.addEventListener('click', stopCapture);
 
-        async function startCapture() {
+        async function main() {
+            setControls(true, '動画リストを取得中...');
+            
             try {
-                // 画面共有をリクエスト (タブ共有を推奨)
-                mediaStream = await navigator.mediaDevices.getDisplayMedia({
-                    video: { mediaSource: "tab" }, // Chrome 107+
-                    audio: false
-                });
-
-                videoElement.srcObject = mediaStream;
-                setControls(true);
-                statusDiv.textContent = 'キャプチャー中です...';
+                // 1. サーバーから人気の動画IDリストを取得
+                const response = await fetch('/get-videos');
+                if (!response.ok) throw new Error('動画リストの取得に失敗しました。');
+                videoIds = await response.json();
+                if (videoIds.length === 0) throw new Error('動画が見つかりませんでした。');
                 
-                // ストリームが終了した（ユーザーが共有を停止した）場合の処理
-                mediaStream.getVideoTracks()[0].onended = () => stopCapture();
+                // 2. ポップアップウィンドウを開く
+                popupWin = window.open('', 'youtubePlayer', 'width=480,height=320');
+                if (!popupWin) throw new Error('ポップアップがブロックされました。');
+                popupWin.document.body.innerHTML = '<div id="player"></div>';
+                
+                // 3. 画面共有を開始
+                mediaStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+                videoElement.srcObject = mediaStream;
+                mediaStream.getVideoTracks()[0].onended = () => stopCapture(); // ユーザーが共有を停止した場合
 
-                // 5秒ごとにスクリーンショットを撮る
-                captureInterval = setInterval(() => {
-                    takeScreenshot();
-                }, 5000);
+                // 4. YouTubeプレーヤーを初期化
+                statusDiv.textContent = 'プレーヤーの準備完了。動画を再生するとキャプチャーが始まります。';
+                window.onYouTubeIframeAPIReady();
 
             } catch (err) {
-                console.error("画面共有エラー:", err);
-                statusDiv.textContent = 'エラー: 画面共有を開始できませんでした。';
+                console.error("エラー:", err);
+                setControls(false, `エラー: ${err.message}`);
             }
         }
 
-        function stopCapture() {
-            if (captureInterval) clearInterval(captureInterval);
-            if (mediaStream) {
-                mediaStream.getTracks().forEach(track => track.stop());
+        // YouTubeプレーヤーの準備ができたら呼ばれる
+        window.onYouTubeIframeAPIReady = function() {
+            if (player) { // 既にプレーヤーがあれば動画を読み込むだけ
+                loadNextVideo();
+                return;
             }
-            setControls(false);
-            statusDiv.textContent = '停止しました。';
+            player = new YT.Player(popupWin.document.getElementById('player'), {
+                height: '100%',
+                width: '100%',
+                videoId: videoIds[currentVideoIndex],
+                playerVars: { 'autoplay': 1, 'controls': 1 },
+                events: {
+                    'onStateChange': onPlayerStateChange
+                }
+            });
         }
 
+        // プレーヤーの状態が変わったときに呼ばれる
+        function onPlayerStateChange(event) {
+            if (event.data == YT.PlayerState.PLAYING) {
+                // 再生が始まったら5秒ごとにキャプチャ開始
+                statusDiv.textContent = 'キャプチャー中...';
+                captureInterval = setInterval(takeScreenshot, 5000);
+            } else {
+                // 停止・バッファリング中はキャプチャを止める
+                clearInterval(captureInterval);
+                if (event.data == YT.PlayerState.ENDED) {
+                    // 動画が終わったら次の動画へ
+                    statusDiv.textContent = '次の動画を読み込み中...';
+                    loadNextVideo();
+                }
+            }
+        }
+
+        function loadNextVideo() {
+            currentVideoIndex++;
+            if (currentVideoIndex >= videoIds.length) {
+                statusDiv.textContent = '全ての動画の再生が完了しました。';
+                stopCapture();
+                return;
+            }
+            player.loadVideoById(videoIds[currentVideoIndex]);
+        }
+        
         function takeScreenshot() {
             const context = canvasElement.getContext('2d');
-            const videoTrack = mediaStream.getVideoTracks()[0];
-            const { width, height } = videoTrack.getSettings();
-
-            if (!width || !height) return;
-
-            canvasElement.width = width;
-            canvasElement.height = height;
-
-            context.drawImage(videoElement, 0, 0, width, height);
+            canvasElement.width = videoElement.videoWidth;
+            canvasElement.height = videoElement.videoHeight;
+            context.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
             
-            // 画像を作成して表示
             const img = document.createElement('img');
             img.src = canvasElement.toDataURL('image/jpeg');
             img.className = 'rounded-md shadow-md';
             resultsDiv.appendChild(img);
-            resultsDiv.scrollTop = resultsDiv.scrollHeight; // 自動スクロール
+            resultsDiv.scrollTop = resultsDiv.scrollHeight;
         }
 
-        function setControls(isCapturing) {
+        function stopCapture() {
+            clearInterval(captureInterval);
+            if (mediaStream) mediaStream.getTracks().forEach(track => track.stop());
+            if (popupWin) popupWin.close();
+            setControls(false, '停止しました。');
+        }
+
+        function setControls(isCapturing, statusText) {
             startButton.disabled = isCapturing;
             stopButton.disabled = !isCapturing;
-            
-            if(isCapturing) {
+            statusDiv.textContent = statusText;
+            if (isCapturing) {
                 startButton.classList.add('btn-disabled');
                 stopButton.classList.remove('btn-disabled');
-                resultsDiv.innerHTML = ''; // 開始時に結果をクリア
+                resultsDiv.innerHTML = '';
             } else {
                 startButton.classList.remove('btn-disabled');
                 stopButton.classList.add('btn-disabled');
