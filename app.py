@@ -29,7 +29,9 @@ def get_videos():
             chart="mostPopular",
             regionCode=REGION_CODE,
             maxResults=MAX_RESULTS,
-            videoEmbeddable='true'
+            # ★変更点: パラメータ名を 'videoEmbeddable' から 'video_embeddable' に修正
+            # また、値を文字列の 'true' からPythonの真偽値 True に変更
+            video_embeddable=True
         )
         response = request.execute()
         
@@ -38,7 +40,6 @@ def get_videos():
 
     except Exception as e:
         app.logger.error(f"YouTube APIへのアクセス中にエラーが発生しました: {e}")
-        # ★変更点：デバッグのため、詳細なエラーメッセージをフロントエンドに返す
         return jsonify({"error": f"サーバーエラー: {str(e)}"}), 500
 
 
