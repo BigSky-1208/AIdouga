@@ -35,7 +35,6 @@
                 <button id="startButton" class="px-6 py-3 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700">
                     プレーヤーを開いてキャプチャ開始
                 </button>
-                <!-- ★変更点: 「次の動画」ボタンを追加 -->
                 <button id="nextButton" class="px-6 py-3 bg-green-600 text-white font-semibold rounded-lg shadow-md hover:bg-green-700 btn-disabled" disabled>
                     次の動画
                 </button>
@@ -53,7 +52,7 @@
         </div>
     </div>
 
-    <video id="video" playsinline autoplay muted style="display:none;"></video>
+    <!-- ★変更点: 不要になった<video>要素を削除 -->
     <canvas id="canvas" style="display:none;"></canvas>
 
     <script>
@@ -63,11 +62,10 @@
         const stopButton = document.getElementById('stopButton');
         const statusDiv = document.getElementById('status');
         const resultsDiv = document.getElementById('results');
-        const videoElement = document.getElementById('video');
         const canvasElement = document.getElementById('canvas');
 
         // 状態管理用の変数
-        let popupWin, player, captureInterval, mediaStream, videoIds = [], currentVideoIndex = 0;
+        let popupWin, player, captureInterval, mediaStream, imageCapture, videoIds = [], currentVideoIndex = 0;
         
         // イベントリスナーの設定
         startButton.addEventListener('click', main);
@@ -104,8 +102,11 @@
                 popupWin.document.body.innerHTML = '<div id="player-container" style="position:absolute; top:0; left:0; width:100%; height:100%;"></div>';
                 
                 mediaStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
-                videoElement.srcObject = mediaStream;
-                mediaStream.getVideoTracks()[0].onended = stopCapture;
+
+                // ★変更点: ImageCapture APIを使って、ストリームから直接画像を取得する準備
+                const videoTrack = mediaStream.getVideoTracks()[0];
+                imageCapture = new ImageCapture(videoTrack);
+                videoTrack.onended = stopCapture;
                 
                 statusDiv.textContent = 'YouTubeプレーヤーAPIを読み込み中...';
                 await loadYouTubeApi();
@@ -131,14 +132,13 @@
                 events: {
                     'onReady': () => statusDiv.textContent = `プレーヤー準備完了。動画(${currentVideoIndex + 1}/${videoIds.length})を再生してください。`,
                     'onStateChange': onPlayerStateChange,
-                    'onError': onPlayerError // ★変更点: エラーハンドラを追加
+                    'onError': onPlayerError
                 }
             });
         }
 
         // プレーヤーの状態が変化したときの処理
         function onPlayerStateChange(event) {
-            // ★変更点: 再生が開始されたらキャプチャーを開始し、それ以外（一時停止、終了など）で停止するロジックを改善
             if (event.data === YT.PlayerState.PLAYING) {
                 startScreenshotInterval();
             } else {
@@ -150,13 +150,11 @@
             }
         }
         
-        // ★追加: プレーヤーでエラーが起きたときの処理
         function onPlayerError(event) {
             statusDiv.textContent = `動画エラー(${event.data})。次の動画を試します。`;
             loadNextVideo();
         }
 
-        // 次の動画を読み込む
         function loadNextVideo() {
             currentVideoIndex++;
             if (currentVideoIndex >= videoIds.length) {
@@ -168,34 +166,38 @@
             player.loadVideoById(videoIds[currentVideoIndex]);
         }
         
-        // スクリーンショット撮影のインターバルを開始
         function startScreenshotInterval() {
-            stopScreenshotInterval(); // 念のため既存のインターバルはクリア
+            stopScreenshotInterval();
             statusDiv.textContent = 'キャプチャー中...';
             captureInterval = setInterval(takeScreenshot, 5000);
         }
 
-        // スクリーンショット撮影のインターバルを停止
         function stopScreenshotInterval() {
             clearInterval(captureInterval);
         }
 
-        // スクリーンショットを撮影して表示
-        function takeScreenshot() {
-            if (!videoElement.srcObject) return;
-            const context = canvasElement.getContext('2d');
-            canvasElement.width = videoElement.videoWidth;
-            canvasElement.height = videoElement.videoHeight;
-            context.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
-            
-            const img = document.createElement('img');
-            img.src = canvasElement.toDataURL('image/jpeg');
-            img.className = 'rounded-md shadow-md';
-            resultsDiv.appendChild(img);
-            resultsDiv.scrollTop = resultsDiv.scrollHeight;
+        // ★変更点: ImageCapture APIを使ってスクリーンショットを撮影する
+        async function takeScreenshot() {
+            if (!imageCapture) return;
+            try {
+                const imageBitmap = await imageCapture.grabFrame();
+                canvasElement.width = imageBitmap.width;
+                canvasElement.height = imageBitmap.height;
+                const context = canvasElement.getContext('2d');
+                context.drawImage(imageBitmap, 0, 0);
+
+                const img = document.createElement('img');
+                img.src = canvasElement.toDataURL('image/jpeg');
+                img.className = 'rounded-md shadow-md';
+                resultsDiv.appendChild(img);
+                resultsDiv.scrollTop = resultsDiv.scrollHeight;
+            } catch (err) {
+                console.error("キャプチャーエラー:", err);
+                statusDiv.textContent = 'キャプチャーエラーが発生しました。';
+                stopScreenshotInterval();
+            }
         }
 
-        // 全てのキャプチャー処理を停止
         function stopCapture() {
             stopScreenshotInterval();
             if (mediaStream) mediaStream.getTracks().forEach(track => track.stop());
@@ -206,16 +208,15 @@
             setControls(false, '停止しました。');
         }
 
-        // 操作ボタンの有効/無効を切り替える
         function setControls(isCapturing, statusText) {
             startButton.disabled = isCapturing;
-            nextButton.disabled = !isCapturing; // ★変更点: nextButtonの制御を追加
+            nextButton.disabled = !isCapturing;
             stopButton.disabled = !isCapturing;
             statusDiv.textContent = statusText;
             
             startButton.classList.toggle('btn-disabled', isCapturing);
-            nextButton.classList.toggle('btn-disabled', !isCapturing); // ★変更点
-            stopButton.classList.toggle('btn-disabled', !isCapturing); // ★変更点
+            nextButton.classList.toggle('btn-disabled', !isCapturing);
+            stopButton.classList.toggle('btn-disabled', !isCapturing);
             
             if (isCapturing) {
                 resultsDiv.innerHTML = '';
