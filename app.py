@@ -23,6 +23,8 @@ auth0 = oauth.register(
     api_base_url=f"https://{os.getenv('AUTH0_DOMAIN')}",
     access_token_url=f"https://{os.getenv('AUTH0_DOMAIN')}/oauth/token",
     authorize_url=f"https://{os.getenv('AUTH0_DOMAIN')}/authorize",
+    # ★修正点: Auth0の設定情報の場所を明示的に指定します
+    server_metadata_url=f"https://{os.getenv('AUTH0_DOMAIN')}/.well-known/openid-configuration",
     client_kwargs={
         'scope': 'openid profile email',
     },
