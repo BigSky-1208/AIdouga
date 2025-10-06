@@ -11,6 +11,8 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
+# ★追加: Google Cloud Vision AIのライブラリ
+from google.cloud import vision
 
 # Basic logging setup
 logging.basicConfig(level=logging.INFO)
@@ -37,43 +39,60 @@ SERVICE_ACCOUNT_FILE = '/etc/secrets/google-credentials.json'
 DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
-def get_google_service(service_name, version, scopes=None):
-    """汎用的なGoogleサービス生成関数"""
-    if not os.path.exists(SERVICE_ACCOUNT_FILE):
-        app.logger.error("Google credentials secret file not found!")
-        return None
-    
-    creds = service_account.Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE, scopes=scopes)
-    
-    if service_name == 'youtube':
-        return build(service_name, version, developerKey=YOUTUBE_API_KEY)
-    
-    return build(service_name, version, credentials=creds)
-
-# --- Routes (Auth0 routes are unchanged) ---
+# --- Routes (Auth0 and other routes are unchanged) ---
 @app.route('/')
 def index():
     return render_template('index.html', session=session.get('user'))
 
+# ... (login, callback, logout, get-video-info routes are unchanged)
 @app.route('/login')
-def login():
-    return auth0.authorize_redirect(redirect_uri=url_for("callback", _external=True))
-
+def login(): return auth0.authorize_redirect(redirect_uri=url_for("callback", _external=True))
 @app.route("/callback")
 def callback():
     token = auth0.authorize_access_token()
     session["user"] = token["userinfo"]
     return redirect("/")
-
 @app.route("/logout")
 def logout():
     session.clear()
     params = {"returnTo": url_for("index", _external=True), "client_id": os.getenv("AUTH0_CLIENT_ID"),}
     return redirect(auth0.api_base_url + "/v2/logout?" + urlencode(params))
+@app.route('/get-video-info/<video_id>')
+def get_video_info(video_id):
+    if 'user' not in session: return jsonify({"error": "認証が必要です。"}), 401
+    if not YOUTUBE_API_KEY: return jsonify({"error": "サーバー側でAPIキーが設定されていません。"}), 500
+    try:
+        youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
+        request_yt = youtube.videos().list(part="snippet,status", id=video_id)
+        response = request_yt.execute()
+        items = response.get("items", [])
+        if not items: return jsonify({"error": "動画が見つかりませんでした。"}), 404
+        video_item = items[0]
+        if not video_item.get('status', {}).get('embeddable'): return jsonify({"error": "この動画は埋め込みが許可されていません。"}), 403
+        title = video_item['snippet']['title']
+        return jsonify({"id": video_id, "title": title})
+    except Exception as e:
+        app.logger.error(f"YouTube API access error: {e}")
+        return jsonify({"error": f"サーバーエラー: {str(e)}"}), 500
+# --- End of unchanged routes ---
 
+# ★ここからがメインの変更箇所です★
 
-# --- Application API Routes ---
+def get_drive_service():
+    """Google Driveサービスを生成する関数"""
+    if not os.path.exists(SERVICE_ACCOUNT_FILE):
+        app.logger.error("Google credentials secret file not found!")
+        return None
+    creds = service_account.Credentials.from_service_account_file(
+        SERVICE_ACCOUNT_FILE, scopes=['https://www.googleapis.com/auth/drive.file'])
+    return build('drive', 'v3', credentials=creds)
+
+def find_folder_id(drive_service, parent_id, folder_name):
+    """指定された親フォルダ内で、名前が一致するサブフォルダのIDを探す"""
+    query = f"'{parent_id}' in parents and name = '{folder_name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+    response = drive_service.files().list(q=query, supportsAllDrives=True, includeItemsFromAllDrives=True, fields="files(id)").execute()
+    files = response.get('files', [])
+    return files[0]['id'] if files else None
 
 @app.route('/upload-screenshot', methods=['POST'])
 def upload_screenshot():
@@ -85,46 +104,54 @@ def upload_screenshot():
         image_data_b64 = data['image'].split(',')[1]
         image_bytes = base64.b64decode(image_data_b64)
 
-        drive_service = get_google_service('drive', 'v3', scopes=['https://www.googleapis.com/auth/drive.file'])
-        if not drive_service or not DRIVE_FOLDER_ID:
-            raise Exception("Google DriveサービスまたはフォルダIDが設定されていません。")
+        # 1. AIで人数を数える
+        vision_client = vision.ImageAnnotatorClient.from_service_account_json(SERVICE_ACCOUNT_FILE)
+        image = vision.Image(content=image_bytes)
+        response = vision_client.object_localization(image=image)
+        person_count = sum(1 for obj in response.localized_object_annotations if obj.name == 'Person')
+        
+        # 2. 人数に応じてフォルダ名を決定
+        target_folder_name = ""
+        if 3 <= person_count <= 5:
+            target_folder_name = "3~5人"
+        elif 6 <= person_count <= 10:
+            target_folder_name = "6~10人"
+        elif person_count >= 11:
+            target_folder_name = "11人~"
+        else:
+            # どのカテゴリにも当てはまらない場合 (例: 0~2人)
+            # ユーザーに「その他」などのフォルダを作成してもらう想定
+            target_folder_name = "その他" 
 
+        # 3. Google Driveサービスを準備し、保存先フォルダIDを決定
+        drive_service = get_drive_service()
+        if not drive_service or not DRIVE_FOLDER_ID:
+            raise Exception("Google Driveサービスまたは親フォルダIDが設定されていません。")
+
+        target_folder_id = find_folder_id(drive_service, DRIVE_FOLDER_ID, target_folder_name)
+        
+        # もしサブフォルダが見つからなければ、親フォルダに保存
+        upload_folder_id = target_folder_id if target_folder_id else DRIVE_FOLDER_ID
+        final_folder_name = target_folder_name if target_folder_id else "（親フォルダ）"
+
+        # 4. ファイルをアップロード
         file_name = data['fileName']
         media_bytes = io.BytesIO(image_bytes)
         media = MediaIoBaseUpload(media_bytes, mimetype='image/jpeg', resumable=True)
-        file_metadata = {'name': file_name, 'parents': [DRIVE_FOLDER_ID]}
+        file_metadata = {'name': file_name, 'parents': [upload_folder_id]}
         
-        # ★変更点: 共有ドライブに対応するための `supportsAllDrives=True` を追加
         file = drive_service.files().create(
-            body=file_metadata,
-            media_body=media,
-            fields='id',
-            supportsAllDrives=True  # この行が重要です！
+            body=file_metadata, media_body=media, fields='id', supportsAllDrives=True
         ).execute()
         
-        return jsonify({ "success": True, "fileId": file.get('id') })
+        return jsonify({ 
+            "success": True, 
+            "fileId": file.get('id'),
+            "message": f"「{final_folder_name}」に保存しました ({person_count}人検出)"
+        })
 
     except Exception as e:
-        app.logger.error(f"Google Drive upload error: {e}")
-        return jsonify({"error": f"サーバーエラー: {str(e)}"}), 500
-
-
-@app.route('/get-video-info/<video_id>')
-def get_video_info(video_id):
-    if 'user' not in session: return jsonify({"error": "認証が必要です。"}), 401
-    if not YOUTUBE_API_KEY: return jsonify({"error": "サーバー側でAPIキーが設定されていません。"}), 500
-    try:
-        youtube = get_google_service('youtube', 'v3')
-        request_yt = youtube.videos().list(part="snippet,status", id=video_id)
-        response = request_yt.execute()
-        items = response.get("items", [])
-        if not items: return jsonify({"error": "動画が見つかりませんでした。"}), 404
-        video_item = items[0]
-        if not video_item.get('status', {}).get('embeddable'): return jsonify({"error": "この動画は埋め込みが許可されていません。"}), 403
-        title = video_item['snippet']['title']
-        return jsonify({"id": video_id, "title": title})
-    except Exception as e:
-        app.logger.error(f"YouTube API access error: {e}")
+        app.logger.error(f"Upload and classify error: {e}")
         return jsonify({"error": f"サーバーエラー: {str(e)}"}), 500
 
 if __name__ == '__main__':
