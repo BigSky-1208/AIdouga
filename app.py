@@ -1,7 +1,6 @@
 import os
 import io
 import base64
-# ★修正点: request をインポートリストに追加
 from flask import Flask, render_template, jsonify, session, redirect, url_for, request
 import logging
 from authlib.integrations.flask_client import OAuth
@@ -12,8 +11,6 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
-# Google Cloud Visionライブラリ
-from google.cloud import vision
 
 # Basic logging setup
 logging.basicConfig(level=logging.INFO)
@@ -49,7 +46,6 @@ def get_google_service(service_name, version, scopes=None):
     creds = service_account.Credentials.from_service_account_file(
         SERVICE_ACCOUNT_FILE, scopes=scopes)
     
-    # YouTube APIの場合はAPIキーでビルドする
     if service_name == 'youtube':
         return build(service_name, version, developerKey=YOUTUBE_API_KEY)
     
@@ -79,54 +75,32 @@ def logout():
 
 # --- Application API Routes ---
 
-@app.route('/analyze-and-upload', methods=['POST'])
-def analyze_and_upload():
-    """画像を解析し、条件を満たせばドライブにアップロードする"""
+# ★変更点: AI解析をなくし、シンプルなアップロード機能に
+@app.route('/upload-screenshot', methods=['POST'])
+def upload_screenshot():
     if 'user' not in session:
         return jsonify({"error": "認証が必要です。"}), 401
     
     try:
         data = request.json
         image_data_b64 = data['image'].split(',')[1]
-        target_person_count = int(data['targetCount'])
-        
-        # 1. Cloud Vision APIで人数を数える
-        vision_client = vision.ImageAnnotatorClient.from_service_account_file(SERVICE_ACCOUNT_FILE)
         image_bytes = base64.b64decode(image_data_b64)
-        image = vision.Image(content=image_bytes)
+
+        drive_service = get_google_service('drive', 'v3', scopes=['https://www.googleapis.com/auth/drive.file'])
+        if not drive_service or not DRIVE_FOLDER_ID:
+            raise Exception("Google DriveサービスまたはフォルダIDが設定されていません。")
+
+        file_name = data['fileName']
+        media_bytes = io.BytesIO(image_bytes)
+        media = MediaIoBaseUpload(media_bytes, mimetype='image/jpeg', resumable=True)
+        file_metadata = {'name': file_name, 'parents': [DRIVE_FOLDER_ID]}
         
-        response = vision_client.object_localization(image=image)
-        person_count = 0
-        for obj in response.localized_object_annotations:
-            if obj.name == 'Person':
-                person_count += 1
+        file = drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
         
-        # 2. 条件をチェックし、満たせばアップロード
-        condition_met = person_count >= target_person_count
-        upload_info = None
-
-        if condition_met:
-            drive_service = get_google_service('drive', 'v3', scopes=['https://www.googleapis.com/auth/drive.file'])
-            if not drive_service or not DRIVE_FOLDER_ID:
-                raise Exception("Google DriveサービスまたはフォルダIDが設定されていません。")
-
-            file_name = data['fileName']
-            media_bytes = io.BytesIO(image_bytes)
-            media = MediaIoBaseUpload(media_bytes, mimetype='image/jpeg', resumable=True)
-            file_metadata = {'name': file_name, 'parents': [DRIVE_FOLDER_ID]}
-            
-            file = drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
-            upload_info = {"fileId": file.get('id')}
-
-        return jsonify({
-            "success": True, 
-            "personCount": person_count,
-            "conditionMet": condition_met,
-            "uploadInfo": upload_info
-        })
+        return jsonify({ "success": True, "fileId": file.get('id') })
 
     except Exception as e:
-        app.logger.error(f"Analysis or Upload error: {e}")
+        app.logger.error(f"Google Drive upload error: {e}")
         return jsonify({"error": f"サーバーエラー: {str(e)}"}), 500
 
 
@@ -150,5 +124,5 @@ def get_video_info(video_id):
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
-    app.run(host='host.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port)
 
