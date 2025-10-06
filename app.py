@@ -4,13 +4,18 @@ import googleapiclient.discovery
 import logging
 from authlib.integrations.flask_client import OAuth
 from urllib.parse import urlencode
+# ★追加: プロキシ環境で正しく動作させるためのライブラリ
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 # Set up basic logging
 logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__, template_folder='templates')
+# ★追加: アプリケーションにプロキシ設定を適用
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
-# ★追加: Flaskのセッションを安全に保つための秘密鍵
+
+# Flaskのセッションを安全に保つための秘密鍵
 # Renderの環境変数から読み込みます
 app.secret_key = os.getenv("APP_SECRET_KEY")
 
@@ -23,7 +28,7 @@ auth0 = oauth.register(
     api_base_url=f"https://{os.getenv('AUTH0_DOMAIN')}",
     access_token_url=f"https://{os.getenv('AUTH0_DOMAIN')}/oauth/token",
     authorize_url=f"https://{os.getenv('AUTH0_DOMAIN')}/authorize",
-    # ★修正点: Auth0の設定情報の場所を明示的に指定します
+    # Auth0の設定情報の場所を明示的に指定します
     server_metadata_url=f"https://{os.getenv('AUTH0_DOMAIN')}/.well-known/openid-configuration",
     client_kwargs={
         'scope': 'openid profile email',
@@ -69,7 +74,7 @@ def logout():
 def get_video_info(video_id):
     """
     動画情報を取得するAPI。
-    ★変更点: ログインしていない場合はアクセスを拒否します。
+    ログインしていない場合はアクセスを拒否します。
     """
     if 'user' not in session:
         return jsonify({"error": "認証が必要です。"}), 401
