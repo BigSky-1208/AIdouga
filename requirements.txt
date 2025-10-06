@@ -3,3 +3,4 @@ gunicorn
 google-api-python-client
 Authlib
 google-auth
+google-cloud-vision
