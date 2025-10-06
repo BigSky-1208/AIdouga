@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YouTube Popup Capture</title>
+    <title>YouTube Playlist Capture</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { font-family: 'Inter', sans-serif; }
@@ -18,22 +18,39 @@
 <body class="bg-gray-100 text-gray-800">
     <div class="container mx-auto p-8">
         <div class="w-full max-w-4xl mx-auto bg-white rounded-xl shadow-lg p-8">
-            <h1 class="text-3xl font-bold text-center text-gray-900 mb-2">ポップアップ動画キャプチャーツール</h1>
-            <p class="text-center text-gray-500 mb-6">ポップアップで表示される動画を再生すると、自動でキャプチャーを開始します。</p>
+            <h1 class="text-3xl font-bold text-center text-gray-900 mb-2">プレイリスト・キャプチャーツール</h1>
+            <p class="text-center text-gray-500 mb-6">YouTubeのURLを追加してプレイリストを作成し、再生しながらキャプチャーします。</p>
 
+            <!-- ★変更点: URL入力フォームを追加 -->
+            <div class="mb-6">
+                <h2 class="font-semibold text-gray-700 mb-2">1. YouTubeのURLを追加</h2>
+                <div class="flex space-x-2">
+                    <input type="text" id="urlInput" class="flex-grow p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="YouTube動画のURLを貼り付け">
+                    <button id="addButton" class="px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700">追加</button>
+                </div>
+            </div>
+
+            <!-- ★変更点: プレイリスト表示エリアを追加 -->
+            <div class="bg-gray-50 p-4 rounded-lg mb-6">
+                <h2 class="font-semibold text-gray-700 mb-2">2. キャプチャーするプレイリスト</h2>
+                <div id="playlist" class="bg-white p-3 rounded-md min-h-[100px] max-h-[200px] overflow-y-auto space-y-2 text-sm">
+                    <p class="text-gray-400">ここに追加した動画が表示されます...</p>
+                </div>
+            </div>
+            
             <div class="bg-blue-50 border-l-4 border-blue-500 text-blue-700 p-4 mb-6 rounded-md">
-                <h3 class="font-bold">使い方:</h3>
+                <h3 class="font-bold">3. キャプチャーを開始</h3>
                 <ol class="list-decimal list-inside mt-2 text-sm">
-                    <li>下の「プレーヤーを開いてキャプチャ開始」ボタンを押します。</li>
+                    <li>下の「プレイリストをキャプチャー開始」ボタンを押します。</li>
                     <li>小さなポップアップウィンドウが開きます。</li>
                     <li>ブラウザの指示に従って、**開いたポップアップウィンドウを選択して共有**してください。</li>
-                    <li>ポップアップ内の動画を再生すると、5秒ごとにキャプチャーが始まります。</li>
+                    <li>動画が2倍速で再生され、5秒ごとにキャプチャーが始まります。</li>
                 </ol>
             </div>
 
             <div class="flex justify-center space-x-4 mb-6">
                 <button id="startButton" class="px-6 py-3 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700">
-                    プレーヤーを開いてキャプチャ開始
+                    プレイリストをキャプチャー開始
                 </button>
                 <button id="nextButton" class="px-6 py-3 bg-green-600 text-white font-semibold rounded-lg shadow-md hover:bg-green-700 btn-disabled" disabled>
                     次の動画
@@ -52,11 +69,13 @@
         </div>
     </div>
 
-    <!-- ★変更点: 不要になった<video>要素を削除 -->
     <canvas id="canvas" style="display:none;"></canvas>
 
     <script>
         // DOM要素の取得
+        const urlInput = document.getElementById('urlInput');
+        const addButton = document.getElementById('addButton');
+        const playlistDiv = document.getElementById('playlist');
         const startButton = document.getElementById('startButton');
         const nextButton = document.getElementById('nextButton');
         const stopButton = document.getElementById('stopButton');
@@ -68,9 +87,37 @@
         let popupWin, player, captureInterval, mediaStream, imageCapture, videoIds = [], currentVideoIndex = 0;
         
         // イベントリスナーの設定
-        startButton.addEventListener('click', main);
+        addButton.addEventListener('click', addVideoToPlaylist);
+        startButton.addEventListener('click', startCapture);
         nextButton.addEventListener('click', loadNextVideo);
         stopButton.addEventListener('click', stopCapture);
+
+        // ★追加: URLから動画IDを抽出してプレイリストに追加する関数
+        function addVideoToPlaylist() {
+            const url = urlInput.value.trim();
+            if (!url) return;
+
+            const videoId = extractVideoID(url);
+            if (videoId) {
+                if (videoIds.length === 0) playlistDiv.innerHTML = ''; // 最初のメッセージをクリア
+                videoIds.push(videoId);
+                
+                const playlistItem = document.createElement('div');
+                playlistItem.className = 'p-2 bg-gray-100 rounded-md flex justify-between items-center';
+                playlistItem.textContent = `https://youtu.be/${videoId}`;
+                playlistDiv.appendChild(playlistItem);
+
+                urlInput.value = ''; // 入力欄をクリア
+            } else {
+                alert('有効なYouTubeのURLを入力してください。');
+            }
+        }
+
+        function extractVideoID(url) {
+            const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+            const match = url.match(regExp);
+            return (match && match[2].length === 11) ? match[2] : null;
+        }
 
         // YouTube APIの非同期読み込み
         function loadYouTubeApi() {
@@ -85,17 +132,14 @@
         }
 
         // メイン処理
-        async function main() {
-            setControls(true, '動画リストを取得中...');
+        async function startCapture() {
+            if (videoIds.length === 0) {
+                alert('プレイリストに動画を追加してください。');
+                return;
+            }
+            setControls(true, 'ポップアップを開いています...');
             
             try {
-                const response = await fetch('/get-videos');
-                const data = await response.json();
-                if (!response.ok) throw new Error(data.error || '動画リストの取得に失敗しました。');
-                
-                videoIds = data;
-                if (videoIds.length === 0) throw new Error('埋め込み可能な動画が見つかりませんでした。');
-                
                 currentVideoIndex = 0;
                 popupWin = window.open('', 'youtubePlayer', 'width=480,height=320,resizable=yes');
                 if (!popupWin) throw new Error('ポップアップがブロックされました。');
@@ -103,7 +147,6 @@
                 
                 mediaStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
 
-                // ★変更点: ImageCapture APIを使って、ストリームから直接画像を取得する準備
                 const videoTrack = mediaStream.getVideoTracks()[0];
                 imageCapture = new ImageCapture(videoTrack);
                 videoTrack.onended = stopCapture;
@@ -130,15 +173,27 @@
                 videoId: videoIds[currentVideoIndex],
                 playerVars: { 'autoplay': 1, 'controls': 1 },
                 events: {
-                    'onReady': () => statusDiv.textContent = `プレーヤー準備完了。動画(${currentVideoIndex + 1}/${videoIds.length})を再生してください。`,
+                    'onReady': onPlayerReady, // ★変更点
                     'onStateChange': onPlayerStateChange,
                     'onError': onPlayerError
                 }
             });
         }
+        
+        // ★追加: プレーヤー準備完了時の処理
+        function onPlayerReady(event) {
+            statusDiv.textContent = `プレーヤー準備完了。動画(${currentVideoIndex + 1}/${videoIds.length})を再生してください。`;
+            // ★変更点: 再生速度を2倍に設定
+            event.target.setPlaybackRate(2);
+        }
 
         // プレーヤーの状態が変化したときの処理
         function onPlayerStateChange(event) {
+            // ★変更点: 再生速度を再度設定（ユーザーが変更した場合に備える）
+            if(event.target.getPlaybackRate() !== 2) {
+                event.target.setPlaybackRate(2);
+            }
+
             if (event.data === YT.PlayerState.PLAYING) {
                 startScreenshotInterval();
             } else {
@@ -176,7 +231,6 @@
             clearInterval(captureInterval);
         }
 
-        // ★変更点: ImageCapture APIを使ってスクリーンショットを撮影する
         async function takeScreenshot() {
             if (!imageCapture) return;
             try {
@@ -213,6 +267,9 @@
             nextButton.disabled = !isCapturing;
             stopButton.disabled = !isCapturing;
             statusDiv.textContent = statusText;
+            
+            urlInput.disabled = isCapturing; // ★追加
+            addButton.disabled = isCapturing; // ★追加
             
             startButton.classList.toggle('btn-disabled', isCapturing);
             nextButton.classList.toggle('btn-disabled', !isCapturing);
