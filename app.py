@@ -75,7 +75,6 @@ def logout():
 
 # --- Application API Routes ---
 
-# ★変更点: AI解析をなくし、シンプルなアップロード機能に
 @app.route('/upload-screenshot', methods=['POST'])
 def upload_screenshot():
     if 'user' not in session:
@@ -95,7 +94,13 @@ def upload_screenshot():
         media = MediaIoBaseUpload(media_bytes, mimetype='image/jpeg', resumable=True)
         file_metadata = {'name': file_name, 'parents': [DRIVE_FOLDER_ID]}
         
-        file = drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+        # ★変更点: 共有ドライブに対応するための `supportsAllDrives=True` を追加
+        file = drive_service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id',
+            supportsAllDrives=True  # この行が重要です！
+        ).execute()
         
         return jsonify({ "success": True, "fileId": file.get('id') })
 
