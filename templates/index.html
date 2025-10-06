@@ -29,10 +29,20 @@
                 </div>
             </div>
 
-            <div class="bg-gray-50 p-4 rounded-lg mb-6">
-                <h2 class="font-semibold text-gray-700 mb-2">2. キャプチャーするプレイリスト</h2>
-                <div id="playlist" class="bg-white p-3 rounded-md min-h-[100px] max-h-[200px] overflow-y-auto space-y-2 text-sm">
-                    <p class="text-gray-400">ここに追加した動画が表示されます...</p>
+            <!-- ★変更点: レイアウトを2カラムに変更 -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                <div class="bg-gray-50 p-4 rounded-lg">
+                    <h2 class="font-semibold text-gray-700 mb-2">2. キャプチャーするプレイリスト</h2>
+                    <div id="playlist" class="bg-white p-3 rounded-md min-h-[100px] max-h-[200px] overflow-y-auto space-y-2 text-sm">
+                        <p class="text-gray-400">ここに追加した動画が表示されます...</p>
+                    </div>
+                </div>
+                <!-- ★追加: 再生済みリストのエリア -->
+                <div class="bg-gray-50 p-4 rounded-lg">
+                    <h2 class="font-semibold text-gray-700 mb-2">再生済みリスト</h2>
+                    <div id="playedPlaylist" class="bg-white p-3 rounded-md min-h-[100px] max-h-[200px] overflow-y-auto space-y-2 text-sm">
+                         <p class="text-gray-400">再生が終わった動画がここに移動します...</p>
+                    </div>
                 </div>
             </div>
             
@@ -71,6 +81,7 @@
         const urlInput = document.getElementById('urlInput');
         const addButton = document.getElementById('addButton');
         const playlistDiv = document.getElementById('playlist');
+        const playedPlaylistDiv = document.getElementById('playedPlaylist'); // ★追加
         const startButton = document.getElementById('startButton');
         const stopButton = document.getElementById('stopButton');
         const statusDiv = document.getElementById('status');
@@ -80,6 +91,7 @@
         // 状態管理用の変数
         let popupWin, player, captureInterval, mediaStream, imageCapture;
         let videoData = []; // {id, title} のオブジェクトを格納
+        let playedVideoData = []; // ★追加: 再生済みの動画を格納
         let currentVideoIndex = 0;
         
         // イベントリスナーの設定
@@ -87,13 +99,19 @@
         startButton.addEventListener('click', startCapture);
         stopButton.addEventListener('click', stopCapture);
 
-        // ★変更点: URLから動画IDを抽出し、サーバーに問い合わせてタイトルを取得する
         async function addVideoToPlaylist() {
             const url = urlInput.value.trim();
             if (!url) return;
 
             const videoId = extractVideoID(url);
             if (videoId) {
+                // ★変更点: 重複チェック
+                const isDuplicate = videoData.some(v => v.id === videoId) || playedVideoData.some(v => v.id === videoId);
+                if (isDuplicate) {
+                    alert('この動画は既に追加済みです。');
+                    return;
+                }
+
                 addButton.disabled = true;
                 addButton.textContent = '検証中...';
 
@@ -101,17 +119,16 @@
                     const response = await fetch(`/get-video-info/${videoId}`);
                     const data = await response.json();
                     
-                    if (!response.ok) {
-                        throw new Error(data.error || '動画情報の取得に失敗しました。');
-                    }
+                    if (!response.ok) throw new Error(data.error || '動画情報の取得に失敗しました。');
 
                     if (videoData.length === 0) playlistDiv.innerHTML = '';
                     
-                    videoData.push({ id: data.id, title: data.title });
+                    const newVideo = { id: data.id, title: data.title };
+                    videoData.push(newVideo);
                     
                     const playlistItem = document.createElement('div');
                     playlistItem.className = 'p-2 bg-gray-100 rounded-md flex justify-between items-center';
-                    playlistItem.id = `playlist-item-${data.id}`; // ★追加: 自動削除のためのID
+                    playlistItem.id = `playlist-item-${data.id}`;
                     
                     const titleSpan = document.createElement('span');
                     titleSpan.textContent = data.title;
@@ -133,7 +150,7 @@
 
         function extractVideoID(url) {
             const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
-            const match = url.match(regExp);
+            const match = url.match(reg_exp);
             return (match && match[2].length === 11) ? match[2] : null;
         }
 
@@ -167,13 +184,9 @@
                 imageCapture = new ImageCapture(videoTrack);
                 videoTrack.onended = stopCapture;
                 
-                statusDiv.textContent = 'YouTubeプレーヤーAPIを読み込み中...';
                 await loadYouTubeApi();
-                
-                statusDiv.textContent = 'プレーヤーを準備中...';
                 createPlayer();
             } catch (err) {
-                console.error("エラー:", err);
                 setControls(false, `エラー: ${err.message}`);
                 if (popupWin) popupWin.close();
             }
@@ -184,7 +197,8 @@
             const currentVideo = videoData[currentVideoIndex];
             player = new YT.Player(popupWin.document.getElementById('player-container'), {
                 height: '100%', width: '100%', videoId: currentVideo.id,
-                playerVars: { 'autoplay': 1, 'controls': 1 },
+                // ★変更点: アノテーションを非表示にするパラメータ(iv_load_policy: 3)を追加
+                playerVars: { 'autoplay': 1, 'controls': 1, 'iv_load_policy': 3 },
                 events: { 'onReady': onPlayerReady, 'onStateChange': onPlayerStateChange, 'onError': onPlayerError }
             });
         }
@@ -201,9 +215,7 @@
             } else {
                 stopScreenshotInterval();
                 if (event.data === YT.PlayerState.ENDED) {
-                    statusDiv.textContent = '再生終了。次の動画を読み込みます...';
-                    // ★変更点: 再生が終わった動画をリストから削除
-                    removePlaylistItem(videoData[currentVideoIndex].id);
+                    moveVideoToPlayedList(videoData[currentVideoIndex].id);
                     loadNextVideo();
                 }
             }
@@ -211,25 +223,41 @@
         
         function onPlayerError(event) {
             statusDiv.textContent = `動画エラー(${event.data})。次の動画を試します。`;
-            // ★変更点: エラーになった動画をリストから削除
-            removePlaylistItem(videoData[currentVideoIndex].id);
+            moveVideoToPlayedList(videoData[currentVideoIndex].id);
             loadNextVideo();
         }
         
-        // ★追加: プレイリストの項目をIDで検索して削除するヘルパー関数
-        function removePlaylistItem(videoId) {
-            const item = document.getElementById(`playlist-item-${videoId}`);
-            if (item) { item.remove(); }
+        // ★追加: 動画を再生済みリストに移動する関数
+        function moveVideoToPlayedList(videoId) {
+            const playedVideo = videoData.find(v => v.id === videoId);
+            if (!playedVideo) return;
+
+            // 元のリストから削除し、再生済みリストに追加
+            videoData = videoData.filter(v => v.id !== videoId);
+            playedVideoData.push(playedVideo);
+
+            // UIから削除
+            const itemToRemove = document.getElementById(`playlist-item-${videoId}`);
+            if (itemToRemove) itemToRemove.remove();
+            
+            // 再生済みUIに追加
+            if (playedVideoData.length === 1) playedPlaylistDiv.innerHTML = ''; // 初期メッセージをクリア
+            
+            const playedItem = document.createElement('div');
+            playedItem.className = 'p-2 bg-gray-100 rounded-md text-gray-500';
+            playedItem.textContent = playedVideo.title;
+            playedPlaylistDiv.appendChild(playedItem);
         }
 
         function loadNextVideo() {
-            currentVideoIndex++;
-            if (currentVideoIndex >= videoData.length) {
-                statusDiv.textContent = '全ての動画の再生が完了しました。';
+            // ★変更点: インデックスではなく、配列の長さで判定
+            if (videoData.length === 0) {
+                statusDiv.textContent = '全ての動画のキャプチャーが完了しました。';
                 stopCapture();
                 return;
             }
-            const nextVideo = videoData[currentVideoIndex];
+            // 常に先頭の動画を再生
+            const nextVideo = videoData[0];
             statusDiv.textContent = `次の動画を読み込み中: ${nextVideo.title}`;
             player.loadVideoById(nextVideo.id);
         }
