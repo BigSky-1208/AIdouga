@@ -10,8 +10,42 @@
         .folder-btn { transition: all 0.2s ease-in-out; }
         .folder-btn:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
         .folder-btn.active { background-color: #4f46e5; color: white; }
-        #image-container { height: 60vh; }
-        #image-display { max-height: 100%; max-width: 100%; object-fit: contain; }
+        #image-container { 
+            height: 60vh;
+            /* ★変更点: アニメーションで画像がはみ出ないように設定 */
+            overflow: hidden; 
+        }
+        #image-display { 
+            max-height: 100%; 
+            max-width: 100%; 
+            object-fit: contain; 
+            transition: opacity 0.3s ease;
+        }
+
+        /* ★変更点: アニメーションの定義を追加 */
+        @keyframes slide-out-right {
+            from { transform: translateX(0); opacity: 1; }
+            to { transform: translateX(100%); opacity: 0; }
+        }
+        .slide-out-right {
+            animation: slide-out-right 0.4s ease-out forwards;
+        }
+
+        @keyframes slide-out-left {
+            from { transform: translateX(0); opacity: 1; }
+            to { transform: translateX(-100%); opacity: 0; }
+        }
+        .slide-out-left {
+            animation: slide-out-left 0.4s ease-out forwards;
+        }
+
+        @keyframes slide-out-up {
+            from { transform: translateY(0); opacity: 1; }
+            to { transform: translateY(-100%); opacity: 0; }
+        }
+        .slide-out-up {
+            animation: slide-out-up 0.4s ease-out forwards;
+        }
     </style>
 </head>
 <body class="bg-gray-100 text-gray-800">
@@ -77,6 +111,7 @@
     let currentFolder = null;
     let images = [];
     let currentImageIndex = -1;
+    let isAnimating = false; // ★変更点: アニメーション中の多重操作を防ぐフラグ
 
     async function loadFolders() {
         try {
@@ -140,7 +175,10 @@
         if (currentImageIndex < images.length) {
             const image = images[currentImageIndex];
             imageDisplay.src = `/api/image/${image.id}`;
+            // 既存のアニメーションクラスを削除して表示をリセット
+            imageDisplay.className = 'rounded-lg shadow-md';
             imageDisplay.classList.remove('hidden');
+
             messageArea.textContent = '';
             imageInfo.textContent = `[${currentImageIndex + 1} / ${images.length}] ${image.name}`;
         } else {
@@ -161,37 +199,53 @@
         images = [];
         currentImageIndex = -1;
     }
+    
+    // ★変更点: アニメーションを組み込んだmoveCurrentImage関数
+    function moveCurrentImage(action) {
+        if (isAnimating || currentImageIndex < 0 || currentImageIndex >= images.length) return;
 
-    async function moveCurrentImage(action) {
-        if (currentImageIndex < 0 || images.length === 0) return;
-
+        isAnimating = true;
         const image = images[currentImageIndex];
-        loadingSpinner.classList.remove('hidden');
-        imageDisplay.classList.add('opacity-50');
+        
+        let animationClass = '';
+        if (action === 'fuka') animationClass = 'slide-out-left';
+        else if (action === 'nouhin') animationClass = 'slide-out-right';
+        else if (action.startsWith('cat')) animationClass = 'slide-out-up';
 
-        try {
-            const response = await fetch('/api/move-image', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    file_id: image.id,
-                    source_folder_id: currentFolder.id,
-                    action: action
-                })
-            });
-            if (!response.ok) {
-                 const errData = await response.json();
-                 throw new Error(errData.error || 'ファイルの移動に失敗しました。');
+        const handleAnimationEnd = async () => {
+            imageDisplay.removeEventListener('animationend', handleAnimationEnd);
+            
+            loadingSpinner.classList.remove('hidden');
+
+            try {
+                const response = await fetch('/api/move-image', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        file_id: image.id,
+                        source_folder_id: currentFolder.id,
+                        action: action
+                    })
+                });
+                if (!response.ok) {
+                    const errData = await response.json();
+                    throw new Error(errData.error || 'ファイルの移動に失敗しました。');
+                }
+                
+                currentImageIndex++;
+                displayCurrentImage();
+            } catch (error) {
+                alert(`エラー: ${error.message}`);
+                // エラー時はアニメーションを元に戻す
+                imageDisplay.classList.remove(animationClass);
+            } finally {
+                loadingSpinner.classList.add('hidden');
+                isAnimating = false;
             }
-            // Move to next image
-            currentImageIndex++;
-            displayCurrentImage();
-        } catch (error) {
-            alert(`エラー: ${error.message}`);
-        } finally {
-            loadingSpinner.classList.add('hidden');
-            imageDisplay.classList.remove('opacity-50');
-        }
+        };
+
+        imageDisplay.addEventListener('animationend', handleAnimationEnd, { once: true });
+        imageDisplay.classList.add(animationClass);
     }
 
     document.addEventListener('keydown', (e) => {
@@ -222,3 +276,4 @@
 
 </body>
 </html>
+
