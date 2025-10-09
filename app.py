@@ -89,9 +89,9 @@ def populate_folder_cache(drive_service, parent_id):
     global folder_id_cache
     if folder_id_cache: return
 
-    # ★追加: デバッグ用のログ出力
     app.logger.info(f"Searching for subfolders inside parent_id: {parent_id}")
-    
+    app.logger.info(f"Using Shared Drive ID: {SHARED_DRIVE_ID}") # Debug log
+
     app.logger.info("サブフォルダの情報をGoogle Driveから取得中...")
     query = (
         f"'{parent_id}' in parents and "
