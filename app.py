@@ -34,19 +34,20 @@ auth0 = oauth.register(
 # --- Service Keys Setup ---
 SERVICE_ACCOUNT_FILE = '/etc/secrets/google-credentials.json'
 DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
+# ★追加: 共有ドライブのIDを取得
+SHARED_DRIVE_ID = os.getenv("GOOGLE_SHARED_DRIVE_ID")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 ROBOFLOW_API_KEY = os.getenv("ROBOFLOW_API_KEY")
 ROBOFLOW_MODEL_ID = os.getenv("ROBOFLOW_MODEL_ID")
 ROBOFLOW_VERSION_NUMBER = os.getenv("ROBOFLOW_VERSION_NUMBER")
 
-# ★変更点: フォルダIDをキャッシュするための変数
 folder_id_cache = {}
 
 # --- Routes ---
+# (login, callback, logout, get_video_info routes are unchanged)
 @app.route('/')
 def index():
     return render_template('index.html', session=session.get('user'))
-# (login, callback, logout, get_video_info routes are unchanged)
 @app.route('/login')
 def login(): return auth0.authorize_redirect(redirect_uri=url_for("callback", _external=True))
 @app.route("/callback")
@@ -85,20 +86,30 @@ def get_drive_service():
         SERVICE_ACCOUNT_FILE, scopes=['https://www.googleapis.com/auth/drive.file'])
     return build('drive', 'v3', credentials=creds)
 
-# ★変更点: 最初に一度だけフォルダリストを取得し、キャッシュする
+# ★変更点: 共有ドライブを正しく検索するように修正
 def populate_folder_cache(drive_service, parent_id):
     global folder_id_cache
-    if folder_id_cache: # 既にキャッシュがあれば何もしない
-        return
+    if folder_id_cache: return
 
     app.logger.info("サブフォルダの情報をGoogle Driveから取得中...")
     query = f"'{parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
-    response = drive_service.files().list(q=query, supportsAllDrives=True, includeItemsFromAllDrives=True, fields="files(id, name)").execute()
+    
+    # 共有ドライブを検索するためのパラメータを追加
+    list_params = {
+        'q': query,
+        'supportsAllDrives': True,
+        'includeItemsFromAllDrives': True,
+        'fields': "files(id, name)"
+    }
+    if SHARED_DRIVE_ID:
+        list_params['driveId'] = SHARED_DRIVE_ID
+        list_params['corpora'] = 'drive'
+
+    response = drive_service.files().list(**list_params).execute()
     files = response.get('files', [])
     
     folder_id_cache = {folder['name']: folder['id'] for folder in files}
     app.logger.info(f"フォルダキャッシュを作成しました: {folder_id_cache}")
-
 
 @app.route('/upload-screenshot', methods=['POST'])
 def upload_screenshot():
@@ -106,10 +117,10 @@ def upload_screenshot():
         return jsonify({"error": "認証が必要です。"}), 401
     
     try:
+        # ... (Roboflow API call and folder name logic are unchanged)
         data = request.json
         image_data_b64 = data['image'].split(',')[1]
 
-        # 1. Roboflow APIで人数を数える
         if not all([ROBOFLOW_API_KEY, ROBOFLOW_MODEL_ID, ROBOFLOW_VERSION_NUMBER]):
             raise Exception("RoboflowのAPI設定が不足しています。")
 
@@ -122,20 +133,18 @@ def upload_screenshot():
         person_count = len(predictions)
         app.logger.info(f"AIが{person_count}人を検出しました。")
         
-        # 2. 人数に応じてフォルダ名を決定
         target_folder_name = ""
         if 3 <= person_count <= 5: target_folder_name = "3~5人"
         elif 6 <= person_count <= 10: target_folder_name = "6~10人"
         elif person_count >= 11: target_folder_name = "11人~"
         else: target_folder_name = "その他" 
         app.logger.info(f"保存先のフォルダ名: '{target_folder_name}'")
-
-        # 3. Google Driveサービスを準備し、フォルダIDをキャッシュから取得
+        # ---
+        
         drive_service = get_drive_service()
         if not drive_service or not DRIVE_FOLDER_ID:
             raise Exception("Google Driveサービスまたは親フォルダIDが設定されていません。")
         
-        # ★変更点: キャッシュを生成・利用する
         populate_folder_cache(drive_service, DRIVE_FOLDER_ID)
         target_folder_id = folder_id_cache.get(target_folder_name)
 
