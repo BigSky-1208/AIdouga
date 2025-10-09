@@ -6,14 +6,12 @@ import logging
 from authlib.integrations.flask_client import OAuth
 from urllib.parse import urlencode
 from werkzeug.middleware.proxy_fix import ProxyFix
-import requests # Roboflow API呼び出しのために追加
+import requests
 
-# Google Cloud & Driveライブラリ
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
-# Basic logging setup
 logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__, template_folder='templates')
@@ -34,38 +32,33 @@ auth0 = oauth.register(
 )
 
 # --- Service Keys Setup ---
-# Google
 SERVICE_ACCOUNT_FILE = '/etc/secrets/google-credentials.json'
 DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
-# Roboflow
 ROBOFLOW_API_KEY = os.getenv("ROBOFLOW_API_KEY")
 ROBOFLOW_MODEL_ID = os.getenv("ROBOFLOW_MODEL_ID")
 ROBOFLOW_VERSION_NUMBER = os.getenv("ROBOFLOW_VERSION_NUMBER")
 
+# ★変更点: フォルダIDをキャッシュするための変数
+folder_id_cache = {}
 
 # --- Routes ---
 @app.route('/')
 def index():
     return render_template('index.html', session=session.get('user'))
-
+# (login, callback, logout, get_video_info routes are unchanged)
 @app.route('/login')
-def login():
-    return auth0.authorize_redirect(redirect_uri=url_for("callback", _external=True))
-
+def login(): return auth0.authorize_redirect(redirect_uri=url_for("callback", _external=True))
 @app.route("/callback")
 def callback():
     token = auth0.authorize_access_token()
     session["user"] = token["userinfo"]
     return redirect("/")
-
 @app.route("/logout")
 def logout():
     session.clear()
     params = {"returnTo": url_for("index", _external=True), "client_id": os.getenv("AUTH0_CLIENT_ID"),}
     return redirect(auth0.api_base_url + "/v2/logout?" + urlencode(params))
-
-
 @app.route('/get-video-info/<video_id>')
 def get_video_info(video_id):
     if 'user' not in session: return jsonify({"error": "認証が必要です。"}), 401
@@ -85,7 +78,6 @@ def get_video_info(video_id):
         return jsonify({"error": f"サーバーエラー: {str(e)}"}), 500
 
 def get_drive_service():
-    """Google Driveサービスを生成する関数"""
     if not os.path.exists(SERVICE_ACCOUNT_FILE):
         app.logger.error("Google credentials secret file not found!")
         return None
@@ -93,12 +85,20 @@ def get_drive_service():
         SERVICE_ACCOUNT_FILE, scopes=['https://www.googleapis.com/auth/drive.file'])
     return build('drive', 'v3', credentials=creds)
 
-def find_folder_id(drive_service, parent_id, folder_name):
-    """指定された親フォルダ内で、名前が一致するサブフォルダのIDを探す"""
-    query = f"'{parent_id}' in parents and name = '{folder_name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
-    response = drive_service.files().list(q=query, supportsAllDrives=True, includeItemsFromAllDrives=True, fields="files(id)").execute()
+# ★変更点: 最初に一度だけフォルダリストを取得し、キャッシュする
+def populate_folder_cache(drive_service, parent_id):
+    global folder_id_cache
+    if folder_id_cache: # 既にキャッシュがあれば何もしない
+        return
+
+    app.logger.info("サブフォルダの情報をGoogle Driveから取得中...")
+    query = f"'{parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+    response = drive_service.files().list(q=query, supportsAllDrives=True, includeItemsFromAllDrives=True, fields="files(id, name)").execute()
     files = response.get('files', [])
-    return files[0]['id'] if files else None
+    
+    folder_id_cache = {folder['name']: folder['id'] for folder in files}
+    app.logger.info(f"フォルダキャッシュを作成しました: {folder_id_cache}")
+
 
 @app.route('/upload-screenshot', methods=['POST'])
 def upload_screenshot():
@@ -113,46 +113,35 @@ def upload_screenshot():
         if not all([ROBOFLOW_API_KEY, ROBOFLOW_MODEL_ID, ROBOFLOW_VERSION_NUMBER]):
             raise Exception("RoboflowのAPI設定が不足しています。")
 
-        upload_url = "".join([
-            f"https://detect.roboflow.com/{ROBOFLOW_MODEL_ID}/{ROBOFLOW_VERSION_NUMBER}",
-            f"?api_key={ROBOFLOW_API_KEY}"
-        ])
-
+        upload_url = f"https://detect.roboflow.com/{ROBOFLOW_MODEL_ID}/{ROBOFLOW_VERSION_NUMBER}?api_key={ROBOFLOW_API_KEY}"
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
         response = requests.post(upload_url, data=image_data_b64, headers=headers)
         response.raise_for_status()
         
         predictions = response.json().get('predictions', [])
         person_count = len(predictions)
-        
-        # ★追加: デバッグのためのログ出力
         app.logger.info(f"AIが{person_count}人を検出しました。")
         
         # 2. 人数に応じてフォルダ名を決定
         target_folder_name = ""
-        if 3 <= person_count <= 5:
-            target_folder_name = "3~5人"
-        elif 6 <= person_count <= 10:
-            target_folder_name = "6~10人"
-        elif person_count >= 11:
-            target_folder_name = "11人~"
-        else:
-            target_folder_name = "その他" 
-        
+        if 3 <= person_count <= 5: target_folder_name = "3~5人"
+        elif 6 <= person_count <= 10: target_folder_name = "6~10人"
+        elif person_count >= 11: target_folder_name = "11人~"
+        else: target_folder_name = "その他" 
         app.logger.info(f"保存先のフォルダ名: '{target_folder_name}'")
 
-        # 3. Google Driveサービスを準備し、保存先フォルダIDを決定
+        # 3. Google Driveサービスを準備し、フォルダIDをキャッシュから取得
         drive_service = get_drive_service()
         if not drive_service or not DRIVE_FOLDER_ID:
             raise Exception("Google Driveサービスまたは親フォルダIDが設定されていません。")
-
-        target_folder_id = find_folder_id(drive_service, DRIVE_FOLDER_ID, target_folder_name)
         
-        if target_folder_id:
-            app.logger.info(f"フォルダIDが見つかりました: {target_folder_id}")
-        else:
-            app.logger.warning(f"サブフォルダ '{target_folder_name}' が見つかりません。親フォルダに保存します。")
+        # ★変更点: キャッシュを生成・利用する
+        populate_folder_cache(drive_service, DRIVE_FOLDER_ID)
+        target_folder_id = folder_id_cache.get(target_folder_name)
 
+        if not target_folder_id:
+             app.logger.warning(f"サブフォルダ '{target_folder_name}' が見つかりません。親フォルダに保存します。")
+        
         upload_folder_id = target_folder_id if target_folder_id else DRIVE_FOLDER_ID
         final_folder_name = target_folder_name if target_folder_id else "（親フォルダ）"
 
