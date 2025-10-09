@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>画像振り分けツール</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .folder-btn { transition: all 0.2s ease-in-out; }
+        .folder-btn:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .folder-btn.active { background-color: #4f46e5; color: white; }
+        #image-container { height: 60vh; }
+        #image-display { max-height: 100%; max-width: 100%; object-fit: contain; }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <div class="container mx-auto p-4 md:p-8">
+        <div class="w-full max-w-6xl mx-auto bg-white rounded-xl shadow-lg p-8">
+
+            <div class="flex justify-between items-center mb-6 border-b pb-4">
+                <div>
+                    <h1 class="text-3xl font-bold text-gray-900">画像振り分けツール</h1>
+                    <p class="text-gray-500">ようこそ、 {{ session.name }} さん！</p>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <a href="/" class="px-4 py-2 bg-gray-200 text-gray-700 font-semibold rounded-lg hover:bg-gray-300">キャプチャーに戻る</a>
+                    <a href="/logout" class="px-4 py-2 bg-gray-200 text-gray-700 font-semibold rounded-lg hover:bg-gray-300">ログアウト</a>
+                </div>
+            </div>
+
+            <div class="mb-6">
+                <h2 class="text-xl font-semibold text-gray-700 mb-3">1. フォルダを選択</h2>
+                <div id="folder-selection" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <!-- Folder buttons will be injected here -->
+                    <div class="text-center p-4 text-gray-500">フォルダを読み込み中...</div>
+                </div>
+            </div>
+            
+            <div id="main-content" class="hidden">
+                 <div class="bg-blue-50 border-l-4 border-blue-500 text-blue-700 p-4 mb-6 rounded-md">
+                    <h3 class="font-bold">2. 画像を振り分け</h3>
+                    <ul class="list-disc list-inside mt-2 text-sm space-y-1">
+                        <li><b>← (左矢印キー):</b> 「不可」フォルダに移動します。</li>
+                        <li><b>→ (右矢印キー):</b> 「納品可能」フォルダに移動します。</li>
+                        <li><b>数字キー (1, 2, 3):</b> 対応する人数カテゴリのフォルダに移動します。
+                            <ul class="list-['✓'] list-inside ml-6">
+                                <li><b>1:</b> 3～5人</li>
+                                <li><b>2:</b> 6～10人</li>
+                                <li><b>3:</b> 11人～</li>
+                            </ul>
+                        </li>
+                    </ul>
+                </div>
+
+                <div id="image-container" class="w-full bg-gray-200 rounded-lg flex items-center justify-center relative mb-2">
+                    <img id="image-display" src="" alt="振り分け対象の画像" class="hidden rounded-lg shadow-md"/>
+                    <div id="message-area" class="text-center text-gray-600 font-semibold text-xl"></div>
+                    <div id="loading-spinner" class="hidden animate-spin rounded-full h-16 w-16 border-b-2 border-indigo-500"></div>
+                </div>
+                <div id="image-info" class="text-center text-sm text-gray-500 h-6"></div>
+            </div>
+        </div>
+    </div>
+
+<script>
+    const folderSelectionDiv = document.getElementById('folder-selection');
+    const mainContentDiv = document.getElementById('main-content');
+    const imageContainer = document.getElementById('image-container');
+    const imageDisplay = document.getElementById('image-display');
+    const messageArea = document.getElementById('message-area');
+    const imageInfo = document.getElementById('image-info');
+    const loadingSpinner = document.getElementById('loading-spinner');
+
+    let folders = [];
+    let currentFolder = null;
+    let images = [];
+    let currentImageIndex = -1;
+
+    async function loadFolders() {
+        try {
+            const response = await fetch('/api/folders');
+            if (!response.ok) throw new Error('フォルダ情報の取得に失敗しました。');
+            folders = await response.json();
+            
+            folderSelectionDiv.innerHTML = '';
+            if (folders.length === 0) {
+                folderSelectionDiv.innerHTML = '<p class="text-center text-gray-500 col-span-3">対象のフォルダが見つかりません。</p>';
+                return;
+            }
+
+            folders.forEach(folder => {
+                const button = document.createElement('button');
+                button.className = 'folder-btn p-4 bg-white border rounded-lg shadow-sm text-left';
+                button.dataset.folderId = folder.id;
+                button.innerHTML = `
+                    <span class="font-bold text-lg text-gray-800">${folder.name}</span>
+                    <span class="block text-sm text-gray-500">残り: <span class="font-semibold text-indigo-600">${folder.count}</span>枚</span>
+                `;
+                button.onclick = () => selectFolder(folder.id);
+                folderSelectionDiv.appendChild(button);
+            });
+        } catch (error) {
+            folderSelectionDiv.innerHTML = `<p class="text-red-500 text-center col-span-3">エラー: ${error.message}</p>`;
+        }
+    }
+
+    async function selectFolder(folderId) {
+        document.querySelectorAll('.folder-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.folderId === folderId);
+        });
+        
+        currentFolder = folders.find(f => f.id === folderId);
+        mainContentDiv.classList.remove('hidden');
+        imageDisplay.classList.add('hidden');
+        messageArea.textContent = '';
+        loadingSpinner.classList.remove('hidden');
+        imageInfo.textContent = '';
+        
+        try {
+            const response = await fetch(`/api/images/${folderId}`);
+            if (!response.ok) throw new Error('画像リストの取得に失敗しました。');
+            images = await response.json();
+            currentImageIndex = 0;
+            
+            if (images.length > 0) {
+                displayCurrentImage();
+            } else {
+                showFinalMessage("このフォルダに振り分け対象の画像はありません。");
+            }
+        } catch (error) {
+            showFinalMessage(`エラー: ${error.message}`);
+        } finally {
+            loadingSpinner.classList.add('hidden');
+        }
+    }
+    
+    function displayCurrentImage() {
+        if (currentImageIndex < images.length) {
+            const image = images[currentImageIndex];
+            imageDisplay.src = `/api/image/${image.id}`;
+            imageDisplay.classList.remove('hidden');
+            messageArea.textContent = '';
+            imageInfo.textContent = `[${currentImageIndex + 1} / ${images.length}] ${image.name}`;
+        } else {
+            showFinalMessage("このフォルダの振り分けは完了しました！");
+            const folderButton = document.querySelector(`[data-folder-id="${currentFolder.id}"]`);
+            if(folderButton) {
+                folderButton.querySelector('span span').textContent = '0';
+                folderButton.disabled = true;
+                folderButton.classList.add('opacity-50', 'cursor-not-allowed');
+            }
+        }
+    }
+
+    function showFinalMessage(message) {
+        imageDisplay.classList.add('hidden');
+        messageArea.textContent = message;
+        imageInfo.textContent = '';
+        images = [];
+        currentImageIndex = -1;
+    }
+
+    async function moveCurrentImage(action) {
+        if (currentImageIndex < 0 || images.length === 0) return;
+
+        const image = images[currentImageIndex];
+        loadingSpinner.classList.remove('hidden');
+        imageDisplay.classList.add('opacity-50');
+
+        try {
+            const response = await fetch('/api/move-image', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    file_id: image.id,
+                    source_folder_id: currentFolder.id,
+                    action: action
+                })
+            });
+            if (!response.ok) {
+                 const errData = await response.json();
+                 throw new Error(errData.error || 'ファイルの移動に失敗しました。');
+            }
+            // Move to next image
+            currentImageIndex++;
+            displayCurrentImage();
+        } catch (error) {
+            alert(`エラー: ${error.message}`);
+        } finally {
+            loadingSpinner.classList.add('hidden');
+            imageDisplay.classList.remove('opacity-50');
+        }
+    }
+
+    document.addEventListener('keydown', (e) => {
+        if (!currentFolder || images.length === 0) return;
+        
+        switch(e.key) {
+            case 'ArrowLeft':
+                moveCurrentImage('fuka');
+                break;
+            case 'ArrowRight':
+                moveCurrentImage('nouhin');
+                break;
+            case '1':
+                moveCurrentImage('cat1');
+                break;
+            case '2':
+                moveCurrentImage('cat2');
+                break;
+            case '3':
+                moveCurrentImage('cat3');
+                break;
+        }
+    });
+
+    // Initial load
+    loadFolders();
+</script>
+
+</body>
+</html>
