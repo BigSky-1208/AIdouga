@@ -125,6 +125,9 @@ def upload_screenshot():
         predictions = response.json().get('predictions', [])
         person_count = len(predictions)
         
+        # ★追加: デバッグのためのログ出力
+        app.logger.info(f"AIが{person_count}人を検出しました。")
+        
         # 2. 人数に応じてフォルダ名を決定
         target_folder_name = ""
         if 3 <= person_count <= 5:
@@ -135,6 +138,8 @@ def upload_screenshot():
             target_folder_name = "11人~"
         else:
             target_folder_name = "その他" 
+        
+        app.logger.info(f"保存先のフォルダ名: '{target_folder_name}'")
 
         # 3. Google Driveサービスを準備し、保存先フォルダIDを決定
         drive_service = get_drive_service()
@@ -143,6 +148,11 @@ def upload_screenshot():
 
         target_folder_id = find_folder_id(drive_service, DRIVE_FOLDER_ID, target_folder_name)
         
+        if target_folder_id:
+            app.logger.info(f"フォルダIDが見つかりました: {target_folder_id}")
+        else:
+            app.logger.warning(f"サブフォルダ '{target_folder_name}' が見つかりません。親フォルダに保存します。")
+
         upload_folder_id = target_folder_id if target_folder_id else DRIVE_FOLDER_ID
         final_folder_name = target_folder_name if target_folder_id else "（親フォルダ）"
 
