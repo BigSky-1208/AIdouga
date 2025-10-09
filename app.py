@@ -85,11 +85,13 @@ def get_drive_service():
         SERVICE_ACCOUNT_FILE, scopes=['https://www.googleapis.com/auth/drive.file'])
     return build('drive', 'v3', credentials=creds)
 
-# ★最終修正: ご提案いただいた、ページング処理に対応した完成版の関数に置き換え
 def populate_folder_cache(drive_service, parent_id):
     global folder_id_cache
     if folder_id_cache: return
 
+    # ★追加: デバッグ用のログ出力
+    app.logger.info(f"Searching for subfolders inside parent_id: {parent_id}")
+    
     app.logger.info("サブフォルダの情報をGoogle Driveから取得中...")
     query = (
         f"'{parent_id}' in parents and "
