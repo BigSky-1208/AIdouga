@@ -81,8 +81,10 @@ def get_drive_service():
     if not os.path.exists(SERVICE_ACCOUNT_FILE):
         app.logger.error("Google credentials secret file not found!")
         return None
+    # ★★★ 変更点: スコープを drive.file から drive に変更 ★★★
+    # これにより、アプリが作成していない既存のフォルダやファイルも読み取れるようになります。
     creds = service_account.Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE, scopes=['https://www.googleapis.com/auth/drive.file'])
+        SERVICE_ACCOUNT_FILE, scopes=['https://www.googleapis.com/auth/drive'])
     return build('drive', 'v3', credentials=creds)
 
 def populate_folder_cache(drive_service, parent_id):
@@ -90,7 +92,7 @@ def populate_folder_cache(drive_service, parent_id):
     if folder_id_cache: return
 
     app.logger.info(f"Searching for subfolders inside parent_id: {parent_id}")
-    app.logger.info(f"Using Shared Drive ID: {SHARED_DRIVE_ID}") # Debug log
+    app.logger.info(f"Using Shared Drive ID: {SHARED_DRIVE_ID}") 
 
     app.logger.info("サブフォルダの情報をGoogle Driveから取得中...")
     query = (
@@ -118,7 +120,8 @@ def populate_folder_cache(drive_service, parent_id):
         page_token = response.get('nextPageToken', None)
         if not page_token:
             break
-
+            
+    app.logger.info(f"{len(files)}個のサブフォルダが見つかりました。") # デバッグ用にログを追加
     folder_id_cache = {folder['name']: folder['id'] for folder in files}
     app.logger.info(f"フォルダキャッシュを作成しました: {folder_id_cache}")
 
@@ -129,7 +132,6 @@ def upload_screenshot():
         return jsonify({"error": "認証が必要です。"}), 401
     
     try:
-        # ... (Roboflow API call and folder name logic are unchanged)
         data = request.json
         image_data_b64 = data['image'].split(',')[1]
 
@@ -151,7 +153,6 @@ def upload_screenshot():
         elif person_count >= 11: target_folder_name = "11人~"
         else: target_folder_name = "その他" 
         app.logger.info(f"保存先のフォルダ名: '{target_folder_name}'")
-        # ---
         
         drive_service = get_drive_service()
         if not drive_service or not DRIVE_FOLDER_ID:
@@ -166,7 +167,6 @@ def upload_screenshot():
         upload_folder_id = target_folder_id if target_folder_id else DRIVE_FOLDER_ID
         final_folder_name = target_folder_name if target_folder_id else "（親フォルダ）"
 
-        # 4. ファイルをアップロード
         file_name = data['fileName']
         image_bytes = base64.b64decode(image_data_b64)
         media_bytes = io.BytesIO(image_bytes)
@@ -190,4 +190,3 @@ def upload_screenshot():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
-
