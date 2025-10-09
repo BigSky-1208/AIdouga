@@ -34,7 +34,6 @@ auth0 = oauth.register(
 # --- Service Keys Setup ---
 SERVICE_ACCOUNT_FILE = '/etc/secrets/google-credentials.json'
 DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
-# ★最終修正: 共有ドライブのIDを正しく利用します
 SHARED_DRIVE_ID = os.getenv("GOOGLE_SHARED_DRIVE_ID")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 ROBOFLOW_API_KEY = os.getenv("ROBOFLOW_API_KEY")
@@ -86,30 +85,41 @@ def get_drive_service():
         SERVICE_ACCOUNT_FILE, scopes=['https://www.googleapis.com/auth/drive.file'])
     return build('drive', 'v3', credentials=creds)
 
-# ★最終修正: 共有ドライブを確実に検索するためのパラメータを追加
+# ★最終修正: ご提案いただいた、ページング処理に対応した完成版の関数に置き換え
 def populate_folder_cache(drive_service, parent_id):
     global folder_id_cache
     if folder_id_cache: return
 
     app.logger.info("サブフォルダの情報をGoogle Driveから取得中...")
-    query = f"'{parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
-    
-    list_params = {
-        'q': query,
-        'supportsAllDrives': True,
-        'includeItemsFromAllDrives': True,
-        'fields': "files(id, name)"
-    }
-    # 共有ドライブIDが設定されている場合、corporaとdriveIdをパラメータに追加
-    if SHARED_DRIVE_ID:
-        list_params['corpora'] = 'drive'
-        list_params['driveId'] = SHARED_DRIVE_ID
+    query = (
+        f"'{parent_id}' in parents and "
+        f"mimeType = 'application/vnd.google-apps.folder' and "
+        f"trashed = false"
+    )
 
-    response = drive_service.files().list(**list_params).execute()
-    files = response.get('files', [])
-    
+    files = []
+    page_token = None
+    while True:
+        list_params = {
+            'q': query,
+            'supportsAllDrives': True,
+            'includeItemsFromAllDrives': True,
+            'fields': "nextPageToken, files(id, name)",
+            'pageToken': page_token
+        }
+        if SHARED_DRIVE_ID:
+            list_params['corpora'] = 'drive'
+            list_params['driveId'] = SHARED_DRIVE_ID
+
+        response = drive_service.files().list(**list_params).execute()
+        files.extend(response.get('files', []))
+        page_token = response.get('nextPageToken', None)
+        if not page_token:
+            break
+
     folder_id_cache = {folder['name']: folder['id'] for folder in files}
     app.logger.info(f"フォルダキャッシュを作成しました: {folder_id_cache}")
+
 
 @app.route('/upload-screenshot', methods=['POST'])
 def upload_screenshot():
