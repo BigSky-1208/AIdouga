@@ -25,7 +25,6 @@
                     <h1 class="text-3xl font-bold text-gray-900">プレイリスト・キャプチャーツール</h1>
                     <p class="text-gray-500">ようこそ、 {{ session.name }} さん！</p>
                 </div>
-                <!-- ★変更点: 振り分けページへのリンクとログアウトボタンを追加 -->
                 <div class="flex items-center space-x-4">
                     <a href="/huriwake" class="px-4 py-2 bg-green-500 text-white font-semibold rounded-lg hover:bg-green-600">画像振り分けへ</a>
                     <a href="/logout" class="px-4 py-2 bg-gray-200 text-gray-700 font-semibold rounded-lg hover:bg-gray-300">ログアウト</a>
@@ -59,7 +58,7 @@
                 <h3 class="font-bold">3. キャプチャーを開始</h3>
                 <ol class="list-decimal list-inside mt-2 text-sm">
                     <li>下の「プレイリストをキャプチャー開始」ボタンを押します。</li>
-                    <li>小さなポップアップウィンドウが開きます。</li>
+                    <li>大きなポップアップウィンドウが開きます。</li>
                     <li>ブラウザの指示に従って、**開いたポップアップウィンドウを選択して共有**してください。</li>
                     <li>動画が2倍速で再生され、5秒ごとにキャプチャーが始まります。</li>
                 </ol>
@@ -144,16 +143,39 @@
                     const response = await fetch(`/get-video-info/${videoId}`);
                     const data = await response.json();
                     if (!response.ok) throw new Error(data.error || '動画情報の取得に失敗しました。');
-                    if (videoData.length === 0) playlistDiv.innerHTML = '';
+                    
+                    if (videoData.length === 0 && playlistDiv.querySelector('p')) {
+                        playlistDiv.innerHTML = '';
+                    }
+
                     const newVideo = { id: data.id, title: data.title };
                     videoData.push(newVideo);
+                    
                     const playlistItem = document.createElement('div');
                     playlistItem.className = 'p-2 bg-gray-100 rounded-md flex justify-between items-center';
                     playlistItem.id = `playlist-item-${data.id}`;
+                    
                     const titleSpan = document.createElement('span');
                     titleSpan.textContent = data.title;
-                    titleSpan.className = 'font-semibold truncate mr-2';
+                    titleSpan.className = 'font-semibold truncate mr-2 flex-grow';
                     playlistItem.appendChild(titleSpan);
+
+                    // ★変更点(2): 手動で「再生済み」へ移動するボタンを追加
+                    const manualMoveButton = document.createElement('button');
+                    manualMoveButton.textContent = '完了';
+                    manualMoveButton.className = 'px-2 py-1 text-xs bg-gray-200 text-gray-600 rounded hover:bg-gray-300 flex-shrink-0';
+                    manualMoveButton.onclick = () => {
+                        const videoIndex = videoData.findIndex(v => v.id === data.id);
+                        const isMovingCurrentVideo = player && videoIndex === 0;
+
+                        moveVideoToPlayedList(data.id);
+
+                        if (isMovingCurrentVideo) {
+                            loadNextVideo();
+                        }
+                    };
+                    playlistItem.appendChild(manualMoveButton);
+                    
                     playlistDiv.appendChild(playlistItem);
                     urlInput.value = '';
                 } catch (err) {
@@ -188,7 +210,6 @@
             }
             setControls(true, 'ポップアップを開いています...');
             try {
-                // ★変更点: ポップアップウィンドウのサイズをFHD(1920x1080)に変更
                 popupWin = window.open('', 'youtubePlayer', 'width=1920,height=1080,resizable=yes');
                 if (!popupWin) throw new Error('ポップアップがブロックされました。');
                 popupWin.document.body.innerHTML = '<div id="player-container" style="position:absolute; top:0; left:0; width:100%; height:100%;"></div>';
@@ -223,28 +244,45 @@
             } else {
                 stopScreenshotInterval();
                 if (event.data === YT.PlayerState.ENDED) {
-                    moveVideoToPlayedList(videoData[0].id);
-                    loadNextVideo();
+                    // videoData[0] が存在する場合のみ移動処理を行う
+                    if (videoData.length > 0) {
+                        moveVideoToPlayedList(videoData[0].id);
+                        loadNextVideo();
+                    }
                 }
             }
         }
         function onPlayerError(event) {
             statusDiv.textContent = `動画エラー(${event.data})。次の動画を試します。`;
-            moveVideoToPlayedList(videoData[0].id);
-            loadNextVideo();
+            if (videoData.length > 0) {
+                moveVideoToPlayedList(videoData[0].id);
+                loadNextVideo();
+            }
         }
         function moveVideoToPlayedList(videoId) {
-            const playedVideo = videoData.find(v => v.id === videoId);
-            if (!playedVideo) return;
-            videoData = videoData.filter(v => v.id !== videoId);
+            const playedVideoIndex = videoData.findIndex(v => v.id === videoId);
+            if (playedVideoIndex === -1) return;
+
+            const [playedVideo] = videoData.splice(playedVideoIndex, 1);
+            
             playedVideoData.push(playedVideo);
+            
             const itemToRemove = document.getElementById(`playlist-item-${videoId}`);
             if (itemToRemove) itemToRemove.remove();
-            if (playedVideoData.length === 1) playedPlaylistDiv.innerHTML = ''; 
+            
+            if (playedVideoData.length === 1 && playedPlaylistDiv.querySelector('p')) {
+                playedPlaylistDiv.innerHTML = ''; 
+            }
             const playedItem = document.createElement('div');
             playedItem.className = 'p-2 bg-gray-100 rounded-md text-gray-500';
             playedItem.textContent = playedVideo.title;
             playedPlaylistDiv.appendChild(playedItem);
+            
+            if (videoData.length === 0) {
+                 if (!playlistDiv.querySelector('p')) {
+                    playlistDiv.innerHTML = '<p class="text-gray-400">ここに追加した動画が表示されます...</p>';
+                 }
+            }
         }
         function loadNextVideo() {
             if (videoData.length === 0) {
@@ -254,7 +292,9 @@
             }
             const nextVideo = videoData[0];
             statusDiv.textContent = `次の動画を読み込み中: ${nextVideo.title}`;
-            player.loadVideoById(nextVideo.id);
+            if (player) {
+                player.loadVideoById(nextVideo.id);
+            }
         }
         function startScreenshotInterval() {
             stopScreenshotInterval();
@@ -263,7 +303,7 @@
         }
         function stopScreenshotInterval() { clearInterval(captureInterval); }
         async function takeScreenshot() {
-            if (!imageCapture) return;
+            if (!imageCapture || videoData.length === 0) return;
             try {
                 const imageBitmap = await imageCapture.grabFrame();
                 canvasElement.width = imageBitmap.width;
@@ -283,6 +323,7 @@
         }
         async function uploadScreenshot(base64Image) {
             const currentVideo = videoData[0] || playedVideoData[playedVideoData.length - 1];
+             if (!currentVideo) return;
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
             const fileName = `${currentVideo.title.replace(/[^a-zA-Z0-9]/g, '_')}_${timestamp}.jpg`;
             uploadStatus.textContent = `「${fileName}」をアップロード中...`;
@@ -302,7 +343,7 @@
         function stopCapture() {
             stopScreenshotInterval();
             if (mediaStream) mediaStream.getTracks().forEach(track => track.stop());
-            if (popupWin) { popupWin.close(); popupWin = null; }
+            if (popupWin) { popupWin.close(); popupWin = null; player = null; }
             setControls(false, '停止しました。');
         }
         function setControls(isCapturing, statusText) {
@@ -310,8 +351,11 @@
             stopButton.disabled = !isCapturing;
             nextButton.disabled = !isCapturing;
             statusDiv.textContent = statusText;
-            urlInput.disabled = isCapturing;
-            addButton.disabled = isCapturing;
+
+            // ★変更点(1): URL入力と追加ボタンは常に有効にする
+            // urlInput.disabled = isCapturing;
+            // addButton.disabled = isCapturing;
+            
             startButton.classList.toggle('btn-disabled', isCapturing);
             stopButton.classList.toggle('btn-disabled', !isCapturing);
             nextButton.classList.toggle('btn-disabled', !isCapturing);
