@@ -188,7 +188,8 @@
             }
             setControls(true, 'ポップアップを開いています...');
             try {
-                popupWin = window.open('', 'youtubePlayer', 'width=480,height=320,resizable=yes');
+                // ★変更点: ポップアップウィンドウのサイズをFHD(1920x1080)に変更
+                popupWin = window.open('', 'youtubePlayer', 'width=1920,height=1080,resizable=yes');
                 if (!popupWin) throw new Error('ポップアップがブロックされました。');
                 popupWin.document.body.innerHTML = '<div id="player-container" style="position:absolute; top:0; left:0; width:100%; height:100%;"></div>';
                 mediaStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
@@ -324,3 +325,4 @@
 
 </body>
 </html>
+
