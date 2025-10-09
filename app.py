@@ -81,14 +81,13 @@ def get_drive_service():
     if not os.path.exists(SERVICE_ACCOUNT_FILE):
         app.logger.error("Google credentials secret file not found!")
         return None
-    # ★★★ 変更点: スコープを drive.file から drive に変更 ★★★
-    # これにより、アプリが作成していない既存のフォルダやファイルも読み取れるようになります。
     creds = service_account.Credentials.from_service_account_file(
         SERVICE_ACCOUNT_FILE, scopes=['https://www.googleapis.com/auth/drive'])
     return build('drive', 'v3', credentials=creds)
 
 def populate_folder_cache(drive_service, parent_id):
     global folder_id_cache
+    # サーバー起動中に一度だけキャッシュを作成するためのif文
     if folder_id_cache: return
 
     app.logger.info(f"Searching for subfolders inside parent_id: {parent_id}")
@@ -121,7 +120,7 @@ def populate_folder_cache(drive_service, parent_id):
         if not page_token:
             break
             
-    app.logger.info(f"{len(files)}個のサブフォルダが見つかりました。") # デバッグ用にログを追加
+    app.logger.info(f"{len(files)}個のサブフォルダが見つかりました。")
     folder_id_cache = {folder['name']: folder['id'] for folder in files}
     app.logger.info(f"フォルダキャッシュを作成しました: {folder_id_cache}")
 
@@ -148,9 +147,11 @@ def upload_screenshot():
         app.logger.info(f"AIが{person_count}人を検出しました。")
         
         target_folder_name = ""
-        if 3 <= person_count <= 5: target_folder_name = "3~5人"
-        elif 6 <= person_count <= 10: target_folder_name = "6~10人"
-        elif person_count >= 11: target_folder_name = "11人~"
+        # ★★★ 変更点: 半角チルダ(~)を全角の波ダッシュ(～)に変更 ★★★
+        # Google Drive上のフォルダ名と完全に一致させるため
+        if 3 <= person_count <= 5: target_folder_name = "3～5人"
+        elif 6 <= person_count <= 10: target_folder_name = "6～10人"
+        elif person_count >= 11: target_folder_name = "11人～"
         else: target_folder_name = "その他" 
         app.logger.info(f"保存先のフォルダ名: '{target_folder_name}'")
         
@@ -190,3 +191,4 @@ def upload_screenshot():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
+
