@@ -34,8 +34,8 @@ auth0 = oauth.register(
 # --- Service Keys Setup ---
 SERVICE_ACCOUNT_FILE = '/etc/secrets/google-credentials.json'
 DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
-# ★追加: 共有ドライブのIDを取得
-SHARED_DRIVE_ID = os.getenv("GOOGLE_SHARED_DRIVE_ID")
+# ★ 不要になったためコメントアウト (または削除してもOK)
+# SHARED_DRIVE_ID = os.getenv("GOOGLE_SHARED_DRIVE_ID")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 ROBOFLOW_API_KEY = os.getenv("ROBOFLOW_API_KEY")
 ROBOFLOW_MODEL_ID = os.getenv("ROBOFLOW_MODEL_ID")
@@ -86,7 +86,7 @@ def get_drive_service():
         SERVICE_ACCOUNT_FILE, scopes=['https://www.googleapis.com/auth/drive.file'])
     return build('drive', 'v3', credentials=creds)
 
-# ★変更点: 共有ドライブを正しく検索するように修正
+# ★最終修正: 共有ドライブの検索方法をよりシンプルで確実なものに変更
 def populate_folder_cache(drive_service, parent_id):
     global folder_id_cache
     if folder_id_cache: return
@@ -94,18 +94,13 @@ def populate_folder_cache(drive_service, parent_id):
     app.logger.info("サブフォルダの情報をGoogle Driveから取得中...")
     query = f"'{parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
     
-    # 共有ドライブを検索するためのパラメータを追加
-    list_params = {
-        'q': query,
-        'supportsAllDrives': True,
-        'includeItemsFromAllDrives': True,
-        'fields': "files(id, name)"
-    }
-    if SHARED_DRIVE_ID:
-        list_params['driveId'] = SHARED_DRIVE_ID
-        list_params['corpora'] = 'drive'
-
-    response = drive_service.files().list(**list_params).execute()
+    # supportsAllDrives=True だけで、共有ドライブを含めた全ドライブを検索させる
+    response = drive_service.files().list(
+        q=query,
+        supportsAllDrives=True,
+        includeItemsFromAllDrives=True,
+        fields="files(id, name)"
+    ).execute()
     files = response.get('files', [])
     
     folder_id_cache = {folder['name']: folder['id'] for folder in files}
