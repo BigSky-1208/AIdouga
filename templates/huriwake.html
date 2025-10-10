@@ -87,7 +87,7 @@
                 </div>
 
                 <div id="image-container" class="w-full bg-gray-200 rounded-lg flex items-center justify-center relative mb-2">
-                    <img id="image-display" src="" alt="振り分け対象の画像" class="hidden rounded-lg shadow-md"/>
+                    <img id="image-display" src="" alt="振り分け対象の画像" class="rounded-lg shadow-md"/>
                     <div id="message-area" class="text-center text-gray-600 font-semibold text-xl"></div>
                     <div id="loading-spinner" class="hidden animate-spin rounded-full h-16 w-16 border-b-2 border-indigo-500"></div>
                 </div>
@@ -119,14 +119,11 @@
             const nextIndex = currentImageIndex + 1 + i;
             if (nextIndex < images.length) {
                 const imageToPreload = images[nextIndex];
-                // ★変更点: サムネイルリンクをプリロード
-                if (imageToPreload.thumbnailLink) {
-                    const imageUrl = imageToPreload.thumbnailLink;
-                    if (!preloadCache[imageUrl]) {
-                        const img = new Image();
-                        img.src = imageUrl;
-                        preloadCache[imageUrl] = img;
-                    }
+                const imageUrl = `/api/image/${imageToPreload.id}`;
+                if (!preloadCache[imageUrl]) {
+                    const img = new Image();
+                    img.src = imageUrl;
+                    preloadCache[imageUrl] = img;
                 }
             }
         }
@@ -167,7 +164,7 @@
         
         currentFolder = folders.find(f => f.id === folderId);
         mainContentDiv.classList.remove('hidden');
-        imageDisplay.classList.add('hidden');
+        imageDisplay.style.visibility = 'hidden';
         messageArea.textContent = '';
         loadingSpinner.classList.remove('hidden');
         imageInfo.textContent = '';
@@ -187,8 +184,6 @@
             }
         } catch (error) {
             showFinalMessage(`エラー: ${error.message}`);
-        } finally {
-            loadingSpinner.classList.add('hidden');
         }
     }
     
@@ -196,12 +191,14 @@
         if (currentImageIndex < images.length) {
             const image = images[currentImageIndex];
             
-            imageDisplay.classList.add('hidden');
             loadingSpinner.classList.remove('hidden');
+            imageDisplay.style.visibility = 'hidden';
+            imageDisplay.className = 'rounded-lg shadow-md'; // アニメーションクラスをリセット
 
             const onImageLoad = () => {
                 loadingSpinner.classList.add('hidden');
-                imageDisplay.className = 'rounded-lg shadow-md fade-in';
+                imageDisplay.style.visibility = 'visible';
+                imageDisplay.classList.add('fade-in');
                 
                 let personCountText = "不明";
                 if (image.description && image.description.includes('AI Person Count:')) {
@@ -219,13 +216,7 @@
                  isAnimating = false;
             }
 
-            // ★変更点: サムネイルリンクを使用
-            if (image.thumbnailLink) {
-                imageDisplay.src = image.thumbnailLink;
-            } else {
-                showFinalMessage(`サムネイルが見つかりません: ${image.name}`);
-                isAnimating = false;
-            }
+            imageDisplay.src = `/api/image/${image.id}`;
 
         } else {
             showFinalMessage("このフォルダの振り分けは完了しました！");
@@ -240,7 +231,8 @@
     }
 
     function showFinalMessage(message) {
-        imageDisplay.classList.add('hidden');
+        loadingSpinner.classList.add('hidden');
+        imageDisplay.style.visibility = 'hidden';
         messageArea.textContent = message;
         imageInfo.textContent = '';
         images = [];
@@ -253,25 +245,28 @@
         isAnimating = true;
         const image = images[currentImageIndex];
         
+        const movePromise = fetch('/api/move-image', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                file_id: image.id,
+                source_folder_id: currentFolder.id,
+                action: action
+            })
+        });
+
         let animationClass = '';
         if (action === 'fuka') animationClass = 'slide-out-left';
         else if (action === 'nouhin') animationClass = 'slide-out-right';
         else if (action.startsWith('cat')) animationClass = 'slide-out-up';
+        
+        const animationPromise = new Promise(resolve => {
+            imageDisplay.addEventListener('animationend', resolve, { once: true });
+            imageDisplay.className = `rounded-lg shadow-md ${animationClass}`;
+        });
 
-        const handleAnimationEnd = async () => {
-            imageDisplay.removeEventListener('animationend', handleAnimationEnd);
-            
-            try {
-                const response = await fetch('/api/move-image', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        file_id: image.id,
-                        source_folder_id: currentFolder.id,
-                        action: action
-                    })
-                });
-
+        Promise.all([movePromise, animationPromise])
+            .then(async ([response]) => {
                 if (response.ok) {
                     currentImageIndex++;
                     displayCurrentImage();
@@ -280,7 +275,6 @@
                     const errData = await response.json();
                     if (errData.conflict) {
                         images.splice(currentImageIndex, 1);
-
                         if (conflictMessageTimeout) clearTimeout(conflictMessageTimeout);
                         messageArea.textContent = '他のユーザーが処理しました。スキップします。';
                         messageArea.classList.add('text-yellow-600', 'font-bold');
@@ -288,22 +282,18 @@
                             messageArea.textContent = '';
                             messageArea.classList.remove('text-yellow-600', 'font-bold');
                         }, 2000);
-
                         displayCurrentImage();
                         preloadImages();
                     } else {
                         throw new Error(errData.error || 'ファイルの移動に失敗しました。');
                     }
                 }
-            } catch (error) {
+            })
+            .catch(error => {
                 alert(`エラー: ${error.message}`);
-                imageDisplay.classList.remove(animationClass);
+                imageDisplay.className = 'rounded-lg shadow-md';
                 isAnimating = false;
-            }
-        };
-
-        imageDisplay.addEventListener('animationend', handleAnimationEnd, { once: true });
-        imageDisplay.classList.add(animationClass);
+            });
     }
 
     document.addEventListener('keydown', (e) => {
