@@ -63,13 +63,12 @@ def get_folders_with_counts():
 @requires_auth
 def get_images_in_folder(folder_id):
     drive_service = get_drive_service()
-    # ★変更点: descriptionフィールドも一緒に取得するように変更
     query = f"'{folder_id}' in parents and mimeType contains 'image/' and trashed = false"
     list_params = {
         'q': query, 
         'supportsAllDrives': True, 
         'includeItemsFromAllDrives': True, 
-        'fields': 'files(id, name, description)', # description を追加
+        'fields': 'files(id, name, description)',
         'orderBy': 'createdTime'
     }
     shared_drive_id = current_app.config.get("SHARED_DRIVE_ID")
@@ -106,7 +105,6 @@ def get_or_create_folder_id(drive_service, parent_id, name):
     create_params = {'body': file_metadata, 'fields': 'id', 'supportsAllDrives': True}
     
     new_folder = drive_service.files().create(**create_params).execute()
-    # 新しく作ったフォルダをキャッシュに即時反映
     if parent_id in folder_id_cache:
         folder_id_cache[parent_id][name] = new_folder.get('id')
     return new_folder.get('id')
@@ -121,6 +119,19 @@ def move_image():
         action = data['action']
         
         drive_service = get_drive_service()
+
+        # ★変更点: ファイル移動前に、元のフォルダに存在するかを最終確認
+        file_details = drive_service.files().get(fileId=file_id, fields='parents', supportsAllDrives=True).execute()
+        current_parents = file_details.get('parents', [])
+
+        if source_folder_id not in current_parents:
+            # ファイルが元の場所にない = 競合が発生したと判断
+            return jsonify({
+                "success": False,
+                "conflict": True, # フロントエンドで識別するためのフラグ
+                "message": "File has already been moved by another user."
+            }), 409 # 409 Conflict status code
+        
         drive_folder_id = current_app.config.get("DRIVE_FOLDER_ID")
         
         target_parent_id = None
@@ -137,8 +148,7 @@ def move_image():
         if not target_parent_id:
             raise Exception(f"Target folder for action '{action}' not found.")
 
-        file_details = drive_service.files().get(fileId=file_id, fields='parents', supportsAllDrives=True).execute()
-        previous_parents = ",".join(file_details.get('parents'))
+        previous_parents = ",".join(current_parents)
         
         drive_service.files().update(
             fileId=file_id,
