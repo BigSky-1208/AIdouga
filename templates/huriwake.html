@@ -110,9 +110,9 @@
     let images = [];
     let currentImageIndex = -1;
     let isAnimating = false;
-    let preloadCache = {}; // ★変更点: プリロード用のキャッシュ
+    let preloadCache = {};
+    let conflictMessageTimeout; // ★変更点: 競合メッセージ用のタイマー
 
-    // ★変更点: 画像をプリロードする関数
     function preloadImages() {
         const PRELOAD_COUNT = 5;
         for (let i = 0; i < PRELOAD_COUNT; i++) {
@@ -174,11 +174,11 @@
             if (!response.ok) throw new Error('画像リストの取得に失敗しました。');
             images = await response.json();
             currentImageIndex = 0;
-            preloadCache = {}; // フォルダが変わったらキャッシュをリセット
+            preloadCache = {};
             
             if (images.length > 0) {
                 displayCurrentImage();
-                preloadImages(); // ★変更点: 最初のプリロードを開始
+                preloadImages();
             } else {
                 showFinalMessage("このフォルダに振り分け対象の画像はありません。");
             }
@@ -200,7 +200,6 @@
                 loadingSpinner.classList.add('hidden');
                 imageDisplay.className = 'rounded-lg shadow-md fade-in';
                 
-                // ★変更点: AIの認識人数をパースして表示
                 let personCountText = "不明";
                 if (image.description && image.description.includes('AI Person Count:')) {
                     const count = image.description.split(':')[1].trim();
@@ -212,7 +211,7 @@
             };
             
             imageDisplay.onload = onImageLoad;
-            imageDisplay.onerror = () => { // エラーハンドリング
+            imageDisplay.onerror = () => {
                  showFinalMessage(`画像の読み込みに失敗しました: ${image.name}`);
                  isAnimating = false;
             }
@@ -262,14 +261,35 @@
                         action: action
                     })
                 });
-                if (!response.ok) {
+
+                // ★変更点: サーバーからのレスポンスをハンドリング
+                if (response.ok) {
+                    currentImageIndex++;
+                    displayCurrentImage();
+                    preloadImages();
+                } else {
                     const errData = await response.json();
-                    throw new Error(errData.error || 'ファイルの移動に失敗しました。');
+                    if (errData.conflict) {
+                        // 競合が発生した場合の処理
+                        images.splice(currentImageIndex, 1); // ローカルリストから画像を削除
+
+                        // 競合メッセージを表示（2秒後に消える）
+                        if (conflictMessageTimeout) clearTimeout(conflictMessageTimeout);
+                        messageArea.textContent = '他のユーザーが処理しました。スキップします。';
+                        messageArea.classList.add('text-yellow-600', 'font-bold');
+                        conflictMessageTimeout = setTimeout(() => {
+                            messageArea.textContent = '';
+                            messageArea.classList.remove('text-yellow-600', 'font-bold');
+                        }, 2000);
+
+                        // 次の画像を表示 (インデックスはそのまま)
+                        displayCurrentImage();
+                        preloadImages();
+                    } else {
+                        // その他のサーバーエラー
+                        throw new Error(errData.error || 'ファイルの移動に失敗しました。');
+                    }
                 }
-                
-                currentImageIndex++;
-                displayCurrentImage();
-                preloadImages(); // ★変更点: 次の画像のプリロードを開始
             } catch (error) {
                 alert(`エラー: ${error.message}`);
                 imageDisplay.classList.remove(animationClass);
