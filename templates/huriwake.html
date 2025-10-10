@@ -40,7 +40,6 @@
         }
         .slide-out-up { animation: slide-out-up 0.4s ease-out forwards; }
         
-        /* ★変更点: 新しい画像を表示する際のフェードインアニメーション */
         @keyframes fade-in {
             from { opacity: 0; }
             to { opacity: 1; }
@@ -111,6 +110,24 @@
     let images = [];
     let currentImageIndex = -1;
     let isAnimating = false;
+    let preloadCache = {}; // ★変更点: プリロード用のキャッシュ
+
+    // ★変更点: 画像をプリロードする関数
+    function preloadImages() {
+        const PRELOAD_COUNT = 5;
+        for (let i = 0; i < PRELOAD_COUNT; i++) {
+            const nextIndex = currentImageIndex + 1 + i;
+            if (nextIndex < images.length) {
+                const imageToPreload = images[nextIndex];
+                const imageUrl = `/api/image/${imageToPreload.id}`;
+                if (!preloadCache[imageUrl]) {
+                    const img = new Image();
+                    img.src = imageUrl;
+                    preloadCache[imageUrl] = img;
+                }
+            }
+        }
+    }
 
     async function loadFolders() {
         try {
@@ -157,9 +174,11 @@
             if (!response.ok) throw new Error('画像リストの取得に失敗しました。');
             images = await response.json();
             currentImageIndex = 0;
+            preloadCache = {}; // フォルダが変わったらキャッシュをリセット
             
             if (images.length > 0) {
                 displayCurrentImage();
+                preloadImages(); // ★変更点: 最初のプリロードを開始
             } else {
                 showFinalMessage("このフォルダに振り分け対象の画像はありません。");
             }
@@ -170,7 +189,6 @@
         }
     }
     
-    // ★変更点: 画像の読み込み完了を待ってから表示するロジックに変更
     function displayCurrentImage() {
         if (currentImageIndex < images.length) {
             const image = images[currentImageIndex];
@@ -181,11 +199,23 @@
             const onImageLoad = () => {
                 loadingSpinner.classList.add('hidden');
                 imageDisplay.className = 'rounded-lg shadow-md fade-in';
-                imageInfo.textContent = `[${currentImageIndex + 1} / ${images.length}] ${image.name}`;
-                isAnimating = false; // 次の操作を許可
+                
+                // ★変更点: AIの認識人数をパースして表示
+                let personCountText = "不明";
+                if (image.description && image.description.includes('AI Person Count:')) {
+                    const count = image.description.split(':')[1].trim();
+                    personCountText = `${count}人`;
+                }
+                imageInfo.textContent = `[${currentImageIndex + 1} / ${images.length}] ${image.name} (AI認識: ${personCountText})`;
+                
+                isAnimating = false; 
             };
             
             imageDisplay.onload = onImageLoad;
+            imageDisplay.onerror = () => { // エラーハンドリング
+                 showFinalMessage(`画像の読み込みに失敗しました: ${image.name}`);
+                 isAnimating = false;
+            }
             imageDisplay.src = `/api/image/${image.id}`;
 
         } else {
@@ -208,11 +238,10 @@
         currentImageIndex = -1;
     }
     
-    // ★変更点: isAnimatingフラグの管理をdisplayCurrentImageに一部移譲
     function moveCurrentImage(action) {
         if (isAnimating || currentImageIndex < 0 || currentImageIndex >= images.length) return;
 
-        isAnimating = true; // 操作をロック
+        isAnimating = true;
         const image = images[currentImageIndex];
         
         let animationClass = '';
@@ -239,11 +268,12 @@
                 }
                 
                 currentImageIndex++;
-                displayCurrentImage(); // この関数が画像の読み込みとisAnimatingの解除を担当
+                displayCurrentImage();
+                preloadImages(); // ★変更点: 次の画像のプリロードを開始
             } catch (error) {
                 alert(`エラー: ${error.message}`);
                 imageDisplay.classList.remove(animationClass);
-                isAnimating = false; // エラー時はここでロックを解除
+                isAnimating = false;
             }
         };
 
