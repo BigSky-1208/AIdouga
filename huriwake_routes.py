@@ -116,7 +116,8 @@ def get_images_in_folder(folder_id):
         'q': query, 
         'supportsAllDrives': True, 
         'includeItemsFromAllDrives': True, 
-        'fields': 'files(id, name, description)',
+        # ★変更点: thumbnailLinkフィールドを追加で取得
+        'fields': 'files(id, name, description, thumbnailLink)',
         'orderBy': 'createdTime'
     }
     shared_drive_id = current_app.config.get("SHARED_DRIVE_ID")
