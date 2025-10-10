@@ -111,7 +111,7 @@
     let currentImageIndex = -1;
     let isAnimating = false;
     let preloadCache = {};
-    let conflictMessageTimeout; // ★変更点: 競合メッセージ用のタイマー
+    let conflictMessageTimeout;
 
     function preloadImages() {
         const PRELOAD_COUNT = 5;
@@ -119,11 +119,14 @@
             const nextIndex = currentImageIndex + 1 + i;
             if (nextIndex < images.length) {
                 const imageToPreload = images[nextIndex];
-                const imageUrl = `/api/image/${imageToPreload.id}`;
-                if (!preloadCache[imageUrl]) {
-                    const img = new Image();
-                    img.src = imageUrl;
-                    preloadCache[imageUrl] = img;
+                // ★変更点: サムネイルリンクをプリロード
+                if (imageToPreload.thumbnailLink) {
+                    const imageUrl = imageToPreload.thumbnailLink;
+                    if (!preloadCache[imageUrl]) {
+                        const img = new Image();
+                        img.src = imageUrl;
+                        preloadCache[imageUrl] = img;
+                    }
                 }
             }
         }
@@ -215,7 +218,14 @@
                  showFinalMessage(`画像の読み込みに失敗しました: ${image.name}`);
                  isAnimating = false;
             }
-            imageDisplay.src = `/api/image/${image.id}`;
+
+            // ★変更点: サムネイルリンクを使用
+            if (image.thumbnailLink) {
+                imageDisplay.src = image.thumbnailLink;
+            } else {
+                showFinalMessage(`サムネイルが見つかりません: ${image.name}`);
+                isAnimating = false;
+            }
 
         } else {
             showFinalMessage("このフォルダの振り分けは完了しました！");
@@ -262,7 +272,6 @@
                     })
                 });
 
-                // ★変更点: サーバーからのレスポンスをハンドリング
                 if (response.ok) {
                     currentImageIndex++;
                     displayCurrentImage();
@@ -270,10 +279,8 @@
                 } else {
                     const errData = await response.json();
                     if (errData.conflict) {
-                        // 競合が発生した場合の処理
-                        images.splice(currentImageIndex, 1); // ローカルリストから画像を削除
+                        images.splice(currentImageIndex, 1);
 
-                        // 競合メッセージを表示（2秒後に消える）
                         if (conflictMessageTimeout) clearTimeout(conflictMessageTimeout);
                         messageArea.textContent = '他のユーザーが処理しました。スキップします。';
                         messageArea.classList.add('text-yellow-600', 'font-bold');
@@ -282,11 +289,9 @@
                             messageArea.classList.remove('text-yellow-600', 'font-bold');
                         }, 2000);
 
-                        // 次の画像を表示 (インデックスはそのまま)
                         displayCurrentImage();
                         preloadImages();
                     } else {
-                        // その他のサーバーエラー
                         throw new Error(errData.error || 'ファイルの移動に失敗しました。');
                     }
                 }
