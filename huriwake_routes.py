@@ -63,8 +63,15 @@ def get_folders_with_counts():
 @requires_auth
 def get_images_in_folder(folder_id):
     drive_service = get_drive_service()
+    # ★変更点: descriptionフィールドも一緒に取得するように変更
     query = f"'{folder_id}' in parents and mimeType contains 'image/' and trashed = false"
-    list_params = {'q': query, 'supportsAllDrives': True, 'includeItemsFromAllDrives': True, 'fields': 'files(id, name)', 'orderBy': 'createdTime'}
+    list_params = {
+        'q': query, 
+        'supportsAllDrives': True, 
+        'includeItemsFromAllDrives': True, 
+        'fields': 'files(id, name, description)', # description を追加
+        'orderBy': 'createdTime'
+    }
     shared_drive_id = current_app.config.get("SHARED_DRIVE_ID")
     if shared_drive_id:
         list_params.update({'corpora': 'drive', 'driveId': shared_drive_id})
@@ -145,3 +152,4 @@ def move_image():
     except Exception as e:
         current_app.logger.error(f"Failed to move file: {e}")
         return jsonify({"error": f"ファイルの移動に失敗しました: {str(e)}"}), 500
+
