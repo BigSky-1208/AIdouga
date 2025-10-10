@@ -59,7 +59,7 @@ def get_video_info(video_id):
         request_yt = youtube.videos().list(part="snippet,status", id=video_id)
         response = request_yt.execute()
         items = response.get("items", [])
-        if not items: return jsonify({"error": "動画が見つかりませんでした。"}), 404
+        if not items: return jsonify({"error": "動画が見つからないか、埋め込みが許可されていません。"}), 404
         video_item = items[0]
         if not video_item.get('status', {}).get('embeddable'): return jsonify({"error": "この動画は埋め込みが許可されていません。"}), 403
         title = video_item['snippet']['title']
@@ -106,7 +106,13 @@ def upload_screenshot():
         image_bytes = base64.b64decode(image_data_b64)
         media_bytes = io.BytesIO(image_bytes)
         media = MediaIoBaseUpload(media_bytes, mimetype='image/jpeg', resumable=True)
-        file_metadata = {'name': file_name, 'parents': [upload_folder_id]}
+        
+        # ★変更点: ファイルのメタデータにAIの認識人数を追加
+        file_metadata = {
+            'name': file_name, 
+            'parents': [upload_folder_id],
+            'description': f'AI Person Count: {person_count}'
+        }
         
         file = drive_service.files().create(
             body=file_metadata, media_body=media, fields='id', supportsAllDrives=True
@@ -116,3 +122,4 @@ def upload_screenshot():
     except Exception as e:
         current_app.logger.error(f"Upload error: {e}")
         return jsonify({"error": f"サーバーエラー: {str(e)}"}), 500
+
