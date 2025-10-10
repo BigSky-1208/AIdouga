@@ -12,7 +12,6 @@
         .folder-btn.active { background-color: #4f46e5; color: white; }
         #image-container { 
             height: 60vh;
-            /* ★変更点: アニメーションで画像がはみ出ないように設定 */
             overflow: hidden; 
         }
         #image-display { 
@@ -22,30 +21,31 @@
             transition: opacity 0.3s ease;
         }
 
-        /* ★変更点: アニメーションの定義を追加 */
+        /* アニメーションの定義 */
         @keyframes slide-out-right {
             from { transform: translateX(0); opacity: 1; }
             to { transform: translateX(100%); opacity: 0; }
         }
-        .slide-out-right {
-            animation: slide-out-right 0.4s ease-out forwards;
-        }
+        .slide-out-right { animation: slide-out-right 0.4s ease-out forwards; }
 
         @keyframes slide-out-left {
             from { transform: translateX(0); opacity: 1; }
             to { transform: translateX(-100%); opacity: 0; }
         }
-        .slide-out-left {
-            animation: slide-out-left 0.4s ease-out forwards;
-        }
+        .slide-out-left { animation: slide-out-left 0.4s ease-out forwards; }
 
         @keyframes slide-out-up {
             from { transform: translateY(0); opacity: 1; }
             to { transform: translateY(-100%); opacity: 0; }
         }
-        .slide-out-up {
-            animation: slide-out-up 0.4s ease-out forwards;
+        .slide-out-up { animation: slide-out-up 0.4s ease-out forwards; }
+        
+        /* ★変更点: 新しい画像を表示する際のフェードインアニメーション */
+        @keyframes fade-in {
+            from { opacity: 0; }
+            to { opacity: 1; }
         }
+        .fade-in { animation: fade-in 0.3s ease-in forwards; }
     </style>
 </head>
 <body class="bg-gray-100 text-gray-800">
@@ -67,7 +67,6 @@
             <div class="mb-6">
                 <h2 class="text-xl font-semibold text-gray-700 mb-3">1. フォルダを選択</h2>
                 <div id="folder-selection" class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <!-- Folder buttons will be injected here -->
                     <div class="text-center p-4 text-gray-500">フォルダを読み込み中...</div>
                 </div>
             </div>
@@ -111,7 +110,7 @@
     let currentFolder = null;
     let images = [];
     let currentImageIndex = -1;
-    let isAnimating = false; // ★変更点: アニメーション中の多重操作を防ぐフラグ
+    let isAnimating = false;
 
     async function loadFolders() {
         try {
@@ -171,16 +170,24 @@
         }
     }
     
+    // ★変更点: 画像の読み込み完了を待ってから表示するロジックに変更
     function displayCurrentImage() {
         if (currentImageIndex < images.length) {
             const image = images[currentImageIndex];
-            imageDisplay.src = `/api/image/${image.id}`;
-            // 既存のアニメーションクラスを削除して表示をリセット
-            imageDisplay.className = 'rounded-lg shadow-md';
-            imageDisplay.classList.remove('hidden');
+            
+            imageDisplay.classList.add('hidden');
+            loadingSpinner.classList.remove('hidden');
 
-            messageArea.textContent = '';
-            imageInfo.textContent = `[${currentImageIndex + 1} / ${images.length}] ${image.name}`;
+            const onImageLoad = () => {
+                loadingSpinner.classList.add('hidden');
+                imageDisplay.className = 'rounded-lg shadow-md fade-in';
+                imageInfo.textContent = `[${currentImageIndex + 1} / ${images.length}] ${image.name}`;
+                isAnimating = false; // 次の操作を許可
+            };
+            
+            imageDisplay.onload = onImageLoad;
+            imageDisplay.src = `/api/image/${image.id}`;
+
         } else {
             showFinalMessage("このフォルダの振り分けは完了しました！");
             const folderButton = document.querySelector(`[data-folder-id="${currentFolder.id}"]`);
@@ -189,6 +196,7 @@
                 folderButton.disabled = true;
                 folderButton.classList.add('opacity-50', 'cursor-not-allowed');
             }
+            isAnimating = false;
         }
     }
 
@@ -200,11 +208,11 @@
         currentImageIndex = -1;
     }
     
-    // ★変更点: アニメーションを組み込んだmoveCurrentImage関数
+    // ★変更点: isAnimatingフラグの管理をdisplayCurrentImageに一部移譲
     function moveCurrentImage(action) {
         if (isAnimating || currentImageIndex < 0 || currentImageIndex >= images.length) return;
 
-        isAnimating = true;
+        isAnimating = true; // 操作をロック
         const image = images[currentImageIndex];
         
         let animationClass = '';
@@ -215,8 +223,6 @@
         const handleAnimationEnd = async () => {
             imageDisplay.removeEventListener('animationend', handleAnimationEnd);
             
-            loadingSpinner.classList.remove('hidden');
-
             try {
                 const response = await fetch('/api/move-image', {
                     method: 'POST',
@@ -233,14 +239,11 @@
                 }
                 
                 currentImageIndex++;
-                displayCurrentImage();
+                displayCurrentImage(); // この関数が画像の読み込みとisAnimatingの解除を担当
             } catch (error) {
                 alert(`エラー: ${error.message}`);
-                // エラー時はアニメーションを元に戻す
                 imageDisplay.classList.remove(animationClass);
-            } finally {
-                loadingSpinner.classList.add('hidden');
-                isAnimating = false;
+                isAnimating = false; // エラー時はここでロックを解除
             }
         };
 
@@ -270,7 +273,6 @@
         }
     });
 
-    // Initial load
     loadFolders();
 </script>
 
